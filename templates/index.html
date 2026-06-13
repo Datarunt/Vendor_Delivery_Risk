@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+
+<html>
+
+<head>
+
+    <title>Vendor Commit Risk Prediction</title>
+
+    <style>
+
+        body { font-family: Arial; margin: 40px; }
+
+        .container { max-width: 700px; margin: auto; }
+
+        h1 { text-align: center; }
+
+        form { display: flex; flex-direction: column; gap: 15px; margin-bottom: 30px; }
+
+        input { padding: 10px; }
+
+        button { padding: 12px; background: #007BFF; color: white; border: none; cursor: pointer; }
+
+        button:hover { background: #0056b3; }
+
+        .progress { background: #eee; padding: 10px; border-radius: 5px; margin-bottom: 20px; }
+
+    </style>
+
+</head>
+
+<body>
+
+<div class="container">
+
+    <h1>Vendor Commit Risk Prediction</h1>
+
+ 
+
+    <div class="progress">
+
+        {% if not forecast_ready and not commits_csv_ready and not owner_matrix_ready %}
+
+            Step 1: Upload all required files (Historical, Commits, Owner Matrix)
+
+        {% elif forecast_ready and commits_csv_ready and not owner_matrix_ready %}
+
+            Step 2: Upload Owner Matrix file
+
+        {% elif forecast_ready and not commits_csv_ready %}
+
+            Step 2: Forecast generated. Upload commits file
+
+        {% elif forecast_ready and commits_csv_ready and owner_matrix_ready %}
+
+            Step 3: All files ready. Run combine step
+
+        {% endif %}
+
+    </div>
+
+ 
+
+    <form action="/run_forecast" method="post" enctype="multipart/form-data">
+
+        <label>Upload Historical Receipt File</label>
+
+        <input type="file" name="hist_file" accept=".xlsx,.xls,.csv" required>
+
+ 
+
+        <label>Upload New OTD Data File</label>
+
+        <input type="file" name="new_otd_file" accept=".xlsx,.xls,.csv" required>
+
+ 
+
+        <label>Upload Portal Commit File</label>
+
+        <input type="file" name="commit_file" accept=".xlsx,.xls,.csv" required>
+
+ 
+
+        <label>Upload Owner Matrix File</label>
+
+        <input type="file" name="owner_file" accept=".xlsx,.xls,.csv" required>
+
+ 
+
+        <label>Forecast Start Date</label>
+
+        <input type="date" name="start_date" required>
+
+ 
+
+        <label>Forecast Window in Days(Max = 90)</label>
+
+        <input type="number" name="horizon" min="1" max="90" value="14" required>
+
+ 
+
+        <button type="submit">Predict Risk</button>
+
+    </form>
+
+ 
+
+    {% if accuracy %}
+
+    <h3>Forecast Accuracy</h3>
+
+    <p><b>AVG Commit Qty:</b> {{ accuracy.AVG_COMMIT_QTY }}</p>
+
+    <p><b>R²:</b> {{ accuracy.R2 }}</p>
+
+    <p><b>MAE:</b> {{ accuracy.MAE }}</p>
+
+    <p><b>RMSE:</b> {{ accuracy.RMSE }}</p>
+
+    <p><b>MAPE:</b> {{ accuracy.MAPE }}</p>
+
+    {% endif %}
+
+ 
+
+    {% if forecast_ready %}
+
+    <a href="/download_forecast.csv">
+
+        <button style="background: green;">Download Forecast CSV</button>
+
+    </a>
+
+    {% endif %}
+
+ 
+
+    {% if forecast_ready and commits_csv_ready and owner_matrix_ready %}
+
+    <form action="/combine" method="post">
+
+        <button type="submit" style="background: purple;">
+
+            Combine Forecast, Commits & Owner Matrix
+
+        </button>
+
+    </form>
+
+    {% endif %}
+
+</div>
+
+</body>
+
+</html>
