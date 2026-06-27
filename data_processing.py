@@ -20,10 +20,10 @@ def load_historical_file(hist_file):
     # ---------------------------
     # 2. KEEP REQUIRED COLUMNS
     KEEP_COLUMNS = [
-        'Name 1', 'Material', 'Date Due', 'Date Rcvd', 'Qty Due', 'Qty Rcvd',
-        'Description', 'Status (Qty)', 'Status (Date)', 'Days Late',
-        'Net Order Price','Description p. group'
+        'Name 1', 'Material', 'Date Rcvd', 'Qty Due', 'Qty Rcvd',
+        'Description', 'Days Late'
     ]
+    
     df = df[KEEP_COLUMNS].copy()
     df.rename(columns={'Name 1': 'Vendor Name'}, inplace=True)
 
@@ -41,7 +41,6 @@ def load_historical_file(hist_file):
 
     # ---------------------------
     # 4. FIX DATA TYPES
-    df['Date Due'] = pd.to_datetime(df['Date Due'], errors='coerce')
     df['Date Rcvd'] = pd.to_datetime(df['Date Rcvd'], errors='coerce')
     df['Days Late'] = pd.to_numeric(df['Days Late'], errors='coerce')
 
@@ -58,11 +57,8 @@ def load_historical_file(hist_file):
     df['Avg Days Late'] = df.groupby('Vendor Name')['Days Late'].transform('mean')
 
     # ---------------------------
-    # 7. ENSURE LATEST VENDOR & Description p. group
+    # 7. ENSURE LATEST VENDOR
     df = df.sort_values(['Material', 'Date Rcvd'])
-    latest_attrs = df.groupby('Material', as_index=False).last()
-    vendor_map = latest_attrs.set_index('Material')['Vendor Name'].to_dict()
-    desc_group_map = latest_attrs.set_index('Material')['Description p. group'].to_dict()
 
 
     return df

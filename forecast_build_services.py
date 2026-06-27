@@ -15,7 +15,6 @@ def build_forecast(df, forecast_start_date, forecast_horizon):
 
     vendor_map = latest_attrs.set_index('Material')['Vendor Name'].to_dict()
 
-    desc_group_map = latest_attrs.set_index('Material')['Description p. group'].to_dict()
 
     # ---------------------------
     # accuracy
@@ -53,7 +52,6 @@ def build_forecast(df, forecast_start_date, forecast_horizon):
             "Date Rcvd": future_dates,
             "Qty Rcvd": preds,
             "Vendor Name": vendor_map.get(mat, "UNKNOWN"),
-            "Description p. group": desc_group_map.get(mat),
             "is_forecast": True,
             "Sigma": sigma
         }))
