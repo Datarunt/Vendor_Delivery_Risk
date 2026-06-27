@@ -27,6 +27,14 @@ def process_forecast_uploads(
         new_otd_df = pd.read_excel(new_otd_file)
 
     new_otd_df.columns = new_otd_df.columns.str.strip()
+    new_otd_df = new_otd_df.rename(columns={
+        col: col for col in new_otd_df.columns
+    })
+    # normalize the Y/N column name regardless of case
+    for col in new_otd_df.columns:
+        if col.lower() == "delivered in full y/n":
+            new_otd_df = new_otd_df.rename(columns={col: "Delivered in Full Y/N"})
+            break
 
     print("New OTD columns:")
     print(new_otd_df.columns.tolist())
@@ -41,34 +49,81 @@ def process_forecast_uploads(
         .str.lstrip("0")
     )
 
+    # --------------------------
+    # CALCULATE DAYS DIFF
+    def calculate_days_diff(row):
+        stat_date = pd.to_datetime(row["Stat Date"], errors="coerce")
+        delivered = str(row["Delivered in Full Y/N"]).strip().upper()
+
+        if delivered in ("TRUE", "YES", "Y", "1"):
+            # Branch 1: delivered
+            delivered_date = pd.to_datetime(row["Delivered in Full Date"], errors="coerce")
+            if pd.isna(delivered_date) or pd.isna(stat_date):
+                return 0
+            return (delivered_date - stat_date).days
+
+        else:
+            # Branch 2: not delivered
+            month_of_measure = pd.to_datetime(row["Month of OTD Measure"], errors="coerce")
+            n = int(row["DateDiff Measured Month"]) if pd.notna(row["DateDiff Measured Month"]) else 1
+
+            if pd.isna(month_of_measure) or pd.isna(stat_date):
+                return 0
+
+            # last day of month of measure
+            if month_of_measure.month == 12:
+                month_end = month_of_measure.replace(day=31)
+            else:
+                month_end = month_of_measure.replace(
+                    month=month_of_measure.month + 1, day=1
+                ) - pd.Timedelta(days=1)
+
+            days = (month_end - stat_date).days + 1
+
+            # add full calendar days for each subsequent month
+            for i in range(1, n):
+                next_month = month_end + pd.Timedelta(days=1)
+                next_month = next_month + pd.offsets.MonthEnd(i - 1)
+                if next_month.month == 12:
+                    next_month_end = next_month.replace(day=31)
+                else:
+                    next_month_end = next_month.replace(
+                        month=next_month.month + 1, day=1
+                    ) - pd.Timedelta(days=1)
+                days += (next_month_end - next_month).days + 1
+
+            return days
+
+    new_otd_df["DAYS DIFF"] = new_otd_df.apply(calculate_days_diff, axis=1)
+
     otd_hist_df = pd.DataFrame({
-    "Material": new_otd_df["Material"],
-    "Vendor Name": new_otd_df["VENDOR_NAME"],
-    "Vendor": new_otd_df["VENDOR_ID"],
-    "Date Rcvd": new_otd_df["Delivered in Full Date"],
-    "Date Due": new_otd_df["Corrected Stat Date"],
-    "Qty Due": new_otd_df["Received Qty"],
-    "Qty Rcvd": new_otd_df["Received Qty"],
-    "Days Late": new_otd_df["DAYS DIFF"],
-    "Description": np.select(
-        [
-            new_otd_df["DAYS DIFF"] < 0,
-            new_otd_df["DAYS DIFF"] == 0,
-            new_otd_df["DAYS DIFF"] == 1,
-            new_otd_df["DAYS DIFF"].between(2, 4),
-            new_otd_df["DAYS DIFF"].between(5, 15),
-            new_otd_df["DAYS DIFF"] > 15,
-        ],
-        [
-            "Miss / Early",
-            "Hit / On Time",
-            "Miss / 1 Day Late",
-            "Miss / 2-4 Calendar Days",
-            "Miss / 5-15 Calendar Days",
-            "Miss / > 15 Calendar Days",
-        ],
-        default="Hit / On Time"
-    )
+        "Material": new_otd_df["Material"],
+        "Vendor Name": new_otd_df["VENDOR_NAME"],
+        "Vendor": new_otd_df["VENDOR_ID"],
+        "Date Rcvd": new_otd_df["Delivered in Full Date"],
+        "Date Due": new_otd_df["Stat Date"],
+        "Qty Due": new_otd_df["Received Qty"],
+        "Qty Rcvd": new_otd_df["Received Qty"],
+        "Days Late": new_otd_df["DAYS DIFF"],
+        "Description": np.select(
+            [
+                new_otd_df["DAYS DIFF"] < 0,
+                new_otd_df["DAYS DIFF"] == 0,
+                new_otd_df["DAYS DIFF"] == 1,
+                new_otd_df["DAYS DIFF"].between(2, 4),
+                new_otd_df["DAYS DIFF"].between(5, 15),
+                new_otd_df["DAYS DIFF"] > 15,
+            ],
+            [
+                "Miss / Early",
+                "Hit / On Time",
+                "Miss / 1 Day Late",
+                "Miss / 2-4 Calendar Days",
+                "Miss / 5-15 Calendar Days",
+                "Miss / > 15 Calendar Days",
+            ],
+            default="Hit / On Time"
+        )
     })
 
     # ensure correct types (match historical expectations)
