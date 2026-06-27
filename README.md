@@ -1,6 +1,6 @@
 # Vendor Delivery Risk Predictor
 
-A machine learning system that predicts whether a vendor will deliver the quantity they committed to — and flags them as HIGH, MED, or LOW risk before the delivery date arrives.
+A machine learning system that predicts whether a vendor will deliver the quantity they committed to and flags them as HIGH, MED, or LOW risk before the delivery date arrives.
 
 ---
 
@@ -143,7 +143,7 @@ Based on 428 evaluated records:
 | HIGH Risk Recall | 66% |
 | HIGH Risk F1 | 48% |
 
-**What this means in plain terms:** The model catches about 2 out of 3 vendors that are genuinely high risk (good recall). However, it also flags many low-risk vendors as high risk (lower precision). The recommended use is as a **prioritization tool** — focus attention on HIGH-flagged vendors, but don't treat the label as a final verdict without human review.
+**What this means in plain terms:** The model catches about 2 out of 3 vendors that are genuinely high risk (good recall). However, it also flags many low-risk vendors as high risk (lower precision). The recommended use is as a **prioritization tool** focus attention on HIGH-flagged vendors, but don't treat the label as a final verdict without human review.
 
 ---
 
