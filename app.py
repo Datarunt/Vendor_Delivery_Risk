@@ -36,6 +36,32 @@ def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ["xlsx", "xls", "csv"]
 
 # --------------------------
+# COLUMN DETECTION
+@app.route("/get_columns", methods=["POST"])
+def get_columns():
+    file = request.files.get("file")
+    if not file or not allowed_file(file.filename):
+        return {"columns": []}, 400
+    
+    try:
+        if file.filename.lower().endswith(".csv"):
+            for enc in ("utf-8", "cp1252", "latin1"):
+                try:
+                    df = pd.read_csv(file, encoding=enc, nrows=0)
+                    break
+                except UnicodeDecodeError:
+                    continue
+        else:
+            df = pd.read_excel(file, nrows=0)
+        
+        columns = df.columns.str.strip().tolist()
+        return {"columns": columns}
+    
+    except Exception as e:
+        return {"error": str(e)}, 500
+
+
+# --------------------------
 # ROUTES
 @app.route("/")
 def index():
@@ -60,6 +86,57 @@ def run_forecast():
     commit_file = request.files.get("commit_file")
     owner_file = request.files.get("owner_file")
     new_otd_upload = request.files.get("new_otd_file")
+
+    # --------------------------
+    # READ FIELD MAPPINGS FROM FORM
+    def get_mapping(prefix):
+        mapping = {}
+        for key, value in request.form.items():
+            if key.startswith(f"map_{prefix}__") and value:
+                required_field = key.replace(f"map_{prefix}__", "")
+                mapping[value] = required_field
+        return mapping
+
+    hist_mapping = get_mapping("hist_mapping")
+    otd_mapping = get_mapping("otd_mapping")
+    commit_mapping = get_mapping("commit_mapping")
+    owner_mapping = get_mapping("owner_mapping")
+
+    # --------------------------
+    # APPLY MAPPINGS TO FILES
+    def remap_file(file, mapping):
+        if file.filename.lower().endswith(".csv"):
+            for enc in ("utf-8", "cp1252", "latin1"):
+                try:
+                    df = pd.read_csv(file, encoding=enc)
+                    break
+                except UnicodeDecodeError:
+                    continue
+        else:
+            df = pd.read_excel(file)
+        df.columns = df.columns.str.strip()
+        df = df.rename(columns=mapping)
+        buf = BytesIO()
+        buf.write(df.to_csv(index=False).encode("utf-8"))
+        buf.seek(0)
+        buf.filename = "remapped.csv"
+        buf.name = "remapped.csv"
+        return buf
+
+    from werkzeug.datastructures import FileStorage
+
+    def remap_to_filestorage(file, mapping):
+        buf = remap_file(file, mapping)
+        return FileStorage(
+            stream=buf,
+            filename="remapped.csv",
+            content_type="text/csv"
+        )
+
+    hist_file = remap_to_filestorage(hist_file, hist_mapping)
+    new_otd_upload = remap_to_filestorage(new_otd_upload, otd_mapping)
+    commit_file = remap_to_filestorage(commit_file, commit_mapping)
+    owner_file = remap_to_filestorage(owner_file, owner_mapping)
 
     forecast_start_date = pd.to_datetime(
         request.form.get("start_date")

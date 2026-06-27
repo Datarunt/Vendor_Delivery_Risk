@@ -58,45 +58,50 @@
 
     </div>
 
- 
+
+    <!--<form action="/run_forecast" method="post" enctype="multipart/form-data">
+
+        <label>Upload Historical Receipt File</label>
+        <input type="file" name="hist_file" accept=".xlsx,.xls,.csv" required>
+        <label>Upload New OTD Data File</label>
+        <input type="file" name="new_otd_file" accept=".xlsx,.xls,.csv" required>
+        <label>Upload Portal Commit File</label>
+        <input type="file" name="commit_file" accept=".xlsx,.xls,.csv" required>
+        <label>Upload Owner Matrix File</label>
+        <input type="file" name="owner_file" accept=".xlsx,.xls,.csv" required>
+        <label>Forecast Start Date</label>
+        <input type="date" name="start_date" required>
+        <label>Forecast Window in Days(Max = 90)</label>
+        <input type="number" name="horizon" min="1" max="90" value="14" required>
+        <button type="submit">Predict Risk</button> -->
 
     <form action="/run_forecast" method="post" enctype="multipart/form-data">
 
         <label>Upload Historical Receipt File</label>
-
-        <input type="file" name="hist_file" accept=".xlsx,.xls,.csv" required>
-
- 
+        <input type="file" name="hist_file" accept=".xlsx,.xls,.csv" required
+               onchange="loadColumns(this, 'hist_mapping')">
+        <div id="hist_mapping"></div>
 
         <label>Upload New OTD Data File</label>
-
-        <input type="file" name="new_otd_file" accept=".xlsx,.xls,.csv" required>
-
- 
+        <input type="file" name="new_otd_file" accept=".xlsx,.xls,.csv" required
+               onchange="loadColumns(this, 'otd_mapping')">
+        <div id="otd_mapping"></div>
 
         <label>Upload Portal Commit File</label>
-
-        <input type="file" name="commit_file" accept=".xlsx,.xls,.csv" required>
-
- 
+        <input type="file" name="commit_file" accept=".xlsx,.xls,.csv" required
+               onchange="loadColumns(this, 'commit_mapping')">
+        <div id="commit_mapping"></div>
 
         <label>Upload Owner Matrix File</label>
-
-        <input type="file" name="owner_file" accept=".xlsx,.xls,.csv" required>
-
- 
+        <input type="file" name="owner_file" accept=".xlsx,.xls,.csv" required
+               onchange="loadColumns(this, 'owner_mapping')">
+        <div id="owner_mapping"></div>
 
         <label>Forecast Start Date</label>
-
         <input type="date" name="start_date" required>
 
- 
-
-        <label>Forecast Window in Days(Max = 90)</label>
-
+        <label>Forecast Window in Days (Max = 90)</label>
         <input type="number" name="horizon" min="1" max="90" value="14" required>
-
- 
 
         <button type="submit">Predict Risk</button>
 
@@ -151,5 +156,73 @@
 </div>
 
 </body>
+
+<script>
+const REQUIRED_FIELDS = {
+    hist_mapping: [
+        "Name 1", "Material", "Date Due", "Date Rcvd",
+        "Qty Due", "Qty Rcvd", "Description", "Status (Qty)",
+        "Status (Date)", "Days Late", "Net Order Price", "Description p. group"
+    ],
+    otd_mapping: [
+        "Material", "VENDOR_NAME", "VENDOR_ID",
+        "Delivered in Full Date", "Corrected Stat Date",
+        "Received Qty", "DAYS DIFF"
+    ],
+    commit_mapping: [
+        "Material", "Vendor", "Commit Dt by Suppl", "Commit Qty"
+    ],
+    owner_mapping: [
+        "Supplier #", "Assigned Buyer"
+    ]
+};
+
+async function loadColumns(input, mappingDivId) {
+    const file = input.files[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const response = await fetch("/get_columns", {
+        method: "POST",
+        body: formData
+    });
+
+    const data = await response.json();
+    const columns = data.columns || [];
+    const required = REQUIRED_FIELDS[mappingDivId];
+    const div = document.getElementById(mappingDivId);
+
+    if (columns.length === 0) {
+        div.innerHTML = "<p style='color:red'>Could not read columns from file.</p>";
+        return;
+    }
+
+    let html = `<table style="width:100%; margin-top:10px; border-collapse:collapse;">
+        <tr>
+            <th style="text-align:left; padding:6px; background:#f0f0f0;">Required Field</th>
+            <th style="text-align:left; padding:6px; background:#f0f0f0;">Your Column</th>
+        </tr>`;
+
+    required.forEach(field => {
+        const autoMatch = columns.includes(field) ? field : "";
+        html += `<tr>
+            <td style="padding:6px; border-bottom:1px solid #ddd;">${field}</td>
+            <td style="padding:6px; border-bottom:1px solid #ddd;">
+                <select name="map_${mappingDivId}__${field}" style="width:100%">
+                    <option value="">-- select column --</option>
+                    ${columns.map(c =>
+                        `<option value="${c}" ${c === autoMatch ? "selected" : ""}>${c}</option>`
+                    ).join("")}
+                </select>
+            </td>
+        </tr>`;
+    });
+
+    html += "</table>";
+    div.innerHTML = html;
+}
+</script>
 
 </html>
