@@ -3,6 +3,11 @@ from risk_engine import apply_risk_model
 
 def build_combined_output(forecast_df,commits_df,owner_df,forecast_start_date,forecast_horizon):
 
+    # DEBUG
+    print("Commits columns:", commits_df.columns.tolist())
+    print("Commits sample M00012:")
+    print(commits_df[commits_df["Material"].astype(str).str.strip().str.upper() == "M00012"][["Material","Vendor","Vendor Name"]].head() if "Vendor Name" in commits_df.columns else "NO VENDOR NAME COLUMN")
+
     # ---------------------------
     # Clean Data
     forecast_df["Material"] = forecast_df["Material"].astype(str).str.strip().str.upper()
@@ -27,13 +32,16 @@ def build_combined_output(forecast_df,commits_df,owner_df,forecast_start_date,fo
 
     # ---------------------------
     # Aggregate Commits First
+    agg_dict = {"Commit Qty": "sum"}
+    if "Vendor" in commits_window.columns:
+        agg_dict["Vendor"] = "first"
+    if "Vendor Name" in commits_window.columns:
+        agg_dict["Vendor Name"] = "first"
+
     commits_agg = commits_window.groupby(
         ["Material", "Commit Dt by Suppl"],
         as_index=False
-    ).agg({
-        "Commit Qty": "sum",
-        "Vendor": "first" if "Vendor" in commits_window.columns else None
-    })
+    ).agg(agg_dict)
 
     # ---------------------------
     merged = commits_agg.merge(
@@ -46,10 +54,13 @@ def build_combined_output(forecast_df,commits_df,owner_df,forecast_start_date,fo
     if "Vendor_x" in merged.columns:
         merged["Vendor"] = merged["Vendor_x"]
 
-    if "Vendor Name" not in merged.columns:
-        merged["Vendor Name"] = merged["Vendor"]
-    else:
-        merged["Vendor Name"] = merged["Vendor Name"].fillna(merged["Vendor"])
+    # resolve Vendor Name conflict from merge
+    if "Vendor Name_x" in merged.columns:
+        merged["Vendor Name"] = merged["Vendor Name_x"].fillna(
+            merged.get("Vendor Name_y", pd.Series(dtype=str))
+        )
+    elif "Vendor Name" not in merged.columns:
+        merged["Vendor Name"] = None
 
     # ---------------------------
     # OWNER MATRIX JOIN
@@ -61,9 +72,17 @@ def build_combined_output(forecast_df,commits_df,owner_df,forecast_start_date,fo
     owner_df.columns = owner_df.columns.str.strip()
     owner_df["Supplier #"] = owner_df["Supplier #"].apply(norm)
 
+    supplier_to_name = dict(
+        zip(owner_df["Supplier #"], owner_df.get("Supplier Name", owner_df.get("Vendor Name", pd.Series(dtype=str))))
+    )
     supplier_to_buyer = dict(
         zip(owner_df["Supplier #"], owner_df["Assigned Buyer"])
     )
+
+    # fill Vendor Name — prefer commits, then owner matrix, then vendor ID
+    merged["Vendor Name"] = merged["Vendor Name"].fillna(
+        merged["Vendor"].map(supplier_to_name)
+    ).fillna(merged["Vendor"])
 
     merged["Assigned Buyer"] = merged["Vendor"].map(supplier_to_buyer)
     merged["Assigned Buyer"] = merged["Assigned Buyer"].fillna("UNKNOWN")
@@ -77,8 +96,8 @@ def build_combined_output(forecast_df,commits_df,owner_df,forecast_start_date,fo
 
     # ---------------------------
     # Final Output
+    merged["Commit Dt by Suppl"] = pd.to_datetime(merged["Commit Dt by Suppl"]).dt.strftime("%Y-%m-%d")
     final = merged.rename(columns={"Commit Dt by Suppl": "Vendor Commit"})
-    final["Vendor Commit"] = pd.to_datetime(final["Vendor Commit"]).dt.date
     final = final[[
         "Material",
         "Vendor Name",
