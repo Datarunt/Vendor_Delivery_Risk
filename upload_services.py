@@ -4,6 +4,7 @@ from io import BytesIO
 
 from data_processing import load_historical_file
 from forecast_build_services import build_forecast
+from werkzeug.datastructures import FileStorage
 
 
 def process_forecast_uploads(
@@ -16,8 +17,14 @@ def process_forecast_uploads(
 ):
 
     # ---------------------------
-    # 1. LOAD HISTORICAL
-    df = load_historical_file(hist_file)
+    # 1. LOAD HISTORICAL (optional)
+    if hist_file and hist_file.filename:
+        df = load_historical_file(hist_file)
+    else:
+        df = pd.DataFrame(columns=[
+            'Vendor Name', 'Material', 'Date Received', 'Quantity Due',
+            'Quantity Received', 'Days Late Classification', 'Number of Days Late'
+        ])
 
     # ---------------------------
     # 2. LOAD NEW OTD FILE

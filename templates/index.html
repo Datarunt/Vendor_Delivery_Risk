@@ -34,8 +34,6 @@
 
     <h1>Vendor Commit Risk Prediction</h1>
 
- 
-
     <div class="progress">
 
         {% if not forecast_ready and not commits_csv_ready and not owner_matrix_ready %}
@@ -60,12 +58,12 @@
 
     <form action="/run_forecast" method="post" enctype="multipart/form-data">
 
-        <label>Upload Historical Receipt File</label>
-        <input type="file" name="hist_file" accept=".xlsx,.xls,.csv" required
+        <label>Upload Old Historical Performance File (Optional)</label>
+        <input type="file" name="hist_file" accept=".xlsx,.xls,.csv"
                onchange="loadColumns(this, 'hist_mapping')">
         <div id="hist_mapping"></div>
 
-        <label>Upload New OTD Data File</label>
+        <label>Upload New Historical Performance File</label>
         <input type="file" name="new_otd_file" accept=".xlsx,.xls,.csv" required
                onchange="loadColumns(this, 'otd_mapping')">
         <div id="otd_mapping"></div>
@@ -90,70 +88,45 @@
 
     </form>
 
- 
-
     {% if accuracy %}
-
     <h3>Forecast Accuracy</h3>
-
     <p><b>AVG Commit Qty:</b> {{ accuracy.AVG_COMMIT_QTY }}</p>
-
     <p><b>R²:</b> {{ accuracy.R2 }}</p>
-
     <p><b>MAE:</b> {{ accuracy.MAE }}</p>
-
     <p><b>RMSE:</b> {{ accuracy.RMSE }}</p>
-
     <p><b>MAPE:</b> {{ accuracy.MAPE }}</p>
-
     {% endif %}
-
- 
 
     {% if forecast_ready %}
-
     <a href="/download_forecast.csv">
-
         <button style="background: green;">Download Forecast CSV</button>
-
     </a>
-
     {% endif %}
 
- 
-
     {% if forecast_ready and commits_csv_ready and owner_matrix_ready %}
-
     <form action="/combine" method="post">
-
         <button type="submit" style="background: purple;">
-
             Combine Forecast, Commits & Owner Matrix
-
         </button>
-
     </form>
-
     {% endif %}
 
 </div>
 
-</body>
-
 <script>
 const REQUIRED_FIELDS = {
-     hist_mapping: [
+    hist_mapping: [
         "Vendor", "Material", "Date Received", "Quantity Due",
         "Quantity Received", "Days Late Classification", "Number of Days Late"
     ],
-     otd_mapping: [
+    otd_mapping: [
         "Material", "VENDOR_NAME", "VENDOR_ID",
         "Stat Date", "Delivered in Full Y/N",
         "Delivered in Full Date", "Month of OTD Measure",
         "DateDiff Measured Month", "Received Qty"
     ],
     commit_mapping: [
-        "Material", "Vendor", "Vendor Name","Commit Dt by Suppl", "Commit Qty"
+        "Material", "Vendor", "Vendor Name", "Commit Dt by Suppl", "Commit Qty"
     ],
     owner_mapping: [
         "Supplier #", "Assigned Buyer"
@@ -163,6 +136,9 @@ const REQUIRED_FIELDS = {
 async function loadColumns(input, mappingDivId) {
     const file = input.files[0];
     if (!file) return;
+
+    const div = document.getElementById(mappingDivId);
+    if (!div) return;
 
     const formData = new FormData();
     formData.append("file", file);
@@ -175,7 +151,6 @@ async function loadColumns(input, mappingDivId) {
     const data = await response.json();
     const columns = data.columns || [];
     const required = REQUIRED_FIELDS[mappingDivId];
-    const div = document.getElementById(mappingDivId);
 
     if (columns.length === 0) {
         div.innerHTML = "<p style='color:red'>Could not read columns from file.</p>";
@@ -207,5 +182,7 @@ async function loadColumns(input, mappingDivId) {
     div.innerHTML = html;
 }
 </script>
+
+</body>
 
 </html>

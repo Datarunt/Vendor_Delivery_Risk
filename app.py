@@ -133,7 +133,8 @@ def run_forecast():
             content_type="text/csv"
         )
 
-    hist_file = remap_to_filestorage(hist_file, hist_mapping)
+    if hist_file and hist_file.filename:
+        hist_file = remap_to_filestorage(hist_file, hist_mapping)
     new_otd_upload = remap_to_filestorage(new_otd_upload, otd_mapping)
     commit_file = remap_to_filestorage(commit_file, commit_mapping)
     owner_file = remap_to_filestorage(owner_file, owner_mapping)
@@ -146,7 +147,7 @@ def run_forecast():
         request.form.get("horizon", 14)
     )
 
-    if not hist_file or not allowed_file(hist_file.filename):
+    if hist_file and hist_file.filename and not allowed_file(hist_file.filename):
         return "Invalid historical file", 400
 
     if not commit_file or not allowed_file(commit_file.filename):
