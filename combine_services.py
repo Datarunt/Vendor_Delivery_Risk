@@ -3,10 +3,7 @@ from risk_engine import apply_risk_model
 
 def build_combined_output(forecast_df,commits_df,owner_df,forecast_start_date,forecast_horizon):
 
-    # DEBUG
-    print("Commits columns:", commits_df.columns.tolist())
-    print("Commits sample M00012:")
-    print(commits_df[commits_df["Material"].astype(str).str.strip().str.upper() == "M00012"][["Material","Vendor","Vendor Name"]].head() if "Vendor Name" in commits_df.columns else "NO VENDOR NAME COLUMN")
+
 
     # ---------------------------
     # Clean Data
