@@ -27,9 +27,7 @@ def process_forecast_uploads(
         new_otd_df = pd.read_excel(new_otd_file)
 
     new_otd_df.columns = new_otd_df.columns.str.strip()
-    new_otd_df = new_otd_df.rename(columns={
-        col: col for col in new_otd_df.columns
-    })
+
     # normalize the Y/N column name regardless of case
     for col in new_otd_df.columns:
         if col.lower() == "delivered in full y/n":
@@ -99,13 +97,11 @@ def process_forecast_uploads(
     otd_hist_df = pd.DataFrame({
         "Material": new_otd_df["Material"],
         "Vendor Name": new_otd_df["VENDOR_NAME"],
-        "Vendor": new_otd_df["VENDOR_ID"],
-        "Date Rcvd": new_otd_df["Delivered in Full Date"],
-        "Date Due": new_otd_df["Stat Date"],
-        "Qty Due": new_otd_df["Received Qty"],
-        "Qty Rcvd": new_otd_df["Received Qty"],
-        "Days Late": new_otd_df["DAYS DIFF"],
-        "Description": np.select(
+        "Date Received": new_otd_df["Delivered in Full Date"],
+        "Quantity Due": new_otd_df["Received Qty"],
+        "Quantity Received": new_otd_df["Received Qty"],
+        "Number of Days Late": new_otd_df["DAYS DIFF"],
+        "Days Late Classification": np.select(
             [
                 new_otd_df["DAYS DIFF"] < 0,
                 new_otd_df["DAYS DIFF"] == 0,
@@ -128,9 +124,8 @@ def process_forecast_uploads(
 
     # ensure correct types (match historical expectations)
     otd_hist_df["Material"] = otd_hist_df["Material"].astype(str).str.strip()
-    otd_hist_df["Date Rcvd"] = pd.to_datetime(otd_hist_df["Date Rcvd"], errors="coerce")
-    otd_hist_df["Date Due"] = pd.to_datetime(otd_hist_df["Date Due"], errors="coerce")
-    otd_hist_df["Days Late"] = pd.to_numeric(otd_hist_df["Days Late"], errors="coerce")
+    otd_hist_df["Date Received"] = pd.to_datetime(otd_hist_df["Date Received"], errors="coerce")
+    otd_hist_df["Number of Days Late"] = pd.to_numeric(otd_hist_df["Number of Days Late"], errors="coerce")
 
     # ---------------------------
     # 4. APPEND OTD TO HISTORICAL

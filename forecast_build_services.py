@@ -9,12 +9,11 @@ def build_forecast(df, forecast_start_date, forecast_horizon):
 
     # ---------------------------
     # latest material attrs
-    df = df.sort_values(['Material', 'Date Rcvd'])
+    df = df.sort_values(['Material', 'Date Received'])
 
     latest_attrs = df.groupby('Material', as_index=False).last()
 
     vendor_map = latest_attrs.set_index('Material')['Vendor Name'].to_dict()
-
 
     # ---------------------------
     # accuracy
@@ -37,10 +36,10 @@ def build_forecast(df, forecast_start_date, forecast_horizon):
 
         try:
             preds, sigma = xgboost_forecast_with_uncertainty(
-                g['Qty Rcvd'],
-                g['Date Rcvd'],
+                g['Quantity Received'],
+                g['Date Received'],
                 future_dates,
-                g['Description'],
+                g['Days Late Classification'],
                 g['Vendor Name']
             )
 
@@ -49,8 +48,8 @@ def build_forecast(df, forecast_start_date, forecast_horizon):
 
         final_parts.append(pd.DataFrame({
             "Material": mat,
-            "Date Rcvd": future_dates,
-            "Qty Rcvd": preds,
+            "Date Received": future_dates,
+            "Quantity Received": preds,
             "Vendor Name": vendor_map.get(mat, "UNKNOWN"),
             "is_forecast": True,
             "Sigma": sigma
@@ -62,7 +61,7 @@ def build_forecast(df, forecast_start_date, forecast_horizon):
     df['Sigma'] = np.nan
 
     combined = pd.concat([df, forecast_df]).sort_values(
-        ['Material', 'Date Rcvd']
+        ['Material', 'Date Received']
     )
 
     return combined, accuracy

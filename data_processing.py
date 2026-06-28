@@ -20,12 +20,11 @@ def load_historical_file(hist_file):
     # ---------------------------
     # 2. KEEP REQUIRED COLUMNS
     KEEP_COLUMNS = [
-        'Name 1', 'Material', 'Date Rcvd', 'Qty Due', 'Qty Rcvd',
-        'Description', 'Days Late'
+        'Vendor', 'Material', 'Date Received', 'Quantity Due', 'Quantity Received',
+        'Days Late Classification', 'Number of Days Late'
     ]
-    
     df = df[KEEP_COLUMNS].copy()
-    df.rename(columns={'Name 1': 'Vendor Name'}, inplace=True)
+    df.rename(columns={'Vendor': 'Vendor Name'}, inplace=True)
 
     # ---------------------------
     # 3. CLEAN MATERIAL
@@ -41,24 +40,23 @@ def load_historical_file(hist_file):
 
     # ---------------------------
     # 4. FIX DATA TYPES
-    df['Date Rcvd'] = pd.to_datetime(df['Date Rcvd'], errors='coerce')
-    df['Days Late'] = pd.to_numeric(df['Days Late'], errors='coerce')
+    df['Date Received'] = pd.to_datetime(df['Date Received'], errors='coerce')
+    df['Number of Days Late'] = pd.to_numeric(df['Number of Days Late'], errors='coerce')
 
     # ---------------------------
     # 5. ADJUST DAYS LATE FOR OVER-DELIVERY
-    df['Days Late'] = df.apply(
-        lambda row: 0 if row['Qty Rcvd'] >= row['Qty Due'] else row['Days Late'],
+    df['Number of Days Late'] = df.apply(
+        lambda row: 0 if row['Quantity Received'] >= row['Quantity Due'] else row['Number of Days Late'],
         axis=1
     )
-    df = df.dropna(subset=['Days Late', 'Date Rcvd'])
+    df = df.dropna(subset=['Number of Days Late', 'Date Received'])
 
     # ---------------------------
     # 6. AVG DAYS LATE PER VENDOR
-    df['Avg Days Late'] = df.groupby('Vendor Name')['Days Late'].transform('mean')
+    df['Avg Days Late'] = df.groupby('Vendor Name')['Number of Days Late'].transform('mean')
 
     # ---------------------------
     # 7. ENSURE LATEST VENDOR
-    df = df.sort_values(['Material', 'Date Rcvd'])
-
+    df = df.sort_values(['Material', 'Date Received'])
 
     return df

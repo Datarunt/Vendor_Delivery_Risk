@@ -1,4 +1,3 @@
-
 import pandas as pd
 from risk_engine import apply_risk_model
 
@@ -8,7 +7,7 @@ def build_combined_output(forecast_df,commits_df,owner_df,forecast_start_date,fo
     # Clean Data
     forecast_df["Material"] = forecast_df["Material"].astype(str).str.strip().str.upper()
     commits_df["Material"] = commits_df["Material"].astype(str).str.strip().str.upper()
-    forecast_df["Date Rcvd"] = pd.to_datetime(forecast_df["Date Rcvd"])
+    forecast_df["Date Received"] = pd.to_datetime(forecast_df["Date Received"])
     commits_df["Commit Dt by Suppl"] = pd.to_datetime(commits_df["Commit Dt by Suppl"], errors="coerce")
     commits_df["Commit Qty"] = pd.to_numeric(commits_df["Commit Qty"], errors="coerce")
 
@@ -17,15 +16,20 @@ def build_combined_output(forecast_df,commits_df,owner_df,forecast_start_date,fo
 
     commits_window = commits_df[(commits_df["Commit Dt by Suppl"] >= start) &
                                 (commits_df["Commit Dt by Suppl"] <= end)].copy()
-    forecast_window = forecast_df[(forecast_df["Date Rcvd"] >= start) &
-                                  (forecast_df["Date Rcvd"] <= end) &
+    forecast_window = forecast_df[(forecast_df["Date Received"] >= start) &
+                                  (forecast_df["Date Received"] <= end) &
                                   (forecast_df["is_forecast"] == True)].copy()
+
+    # dedup - keep row with lowest sigma (most confident forecast)
+    forecast_window = forecast_window.sort_values("Sigma").drop_duplicates(
+        subset=["Material", "Date Received"], keep="first"
+    )
 
     # ---------------------------
     # Aggregate Commits First
     commits_agg = commits_window.groupby(
-    ["Material", "Commit Dt by Suppl"],
-    as_index=False
+        ["Material", "Commit Dt by Suppl"],
+        as_index=False
     ).agg({
         "Commit Qty": "sum",
         "Vendor": "first" if "Vendor" in commits_window.columns else None
@@ -35,7 +39,7 @@ def build_combined_output(forecast_df,commits_df,owner_df,forecast_start_date,fo
     merged = commits_agg.merge(
         forecast_window,
         left_on=["Material", "Commit Dt by Suppl"],
-        right_on=["Material", "Date Rcvd"],
+        right_on=["Material", "Date Received"],
         how="left"
     )
 
@@ -44,18 +48,17 @@ def build_combined_output(forecast_df,commits_df,owner_df,forecast_start_date,fo
 
     if "Vendor Name" not in merged.columns:
         merged["Vendor Name"] = merged["Vendor"]
-    
+    else:
+        merged["Vendor Name"] = merged["Vendor Name"].fillna(merged["Vendor"])
+
     # ---------------------------
     # OWNER MATRIX JOIN
-    # Vendor (from commits) == Supplier #
-    # ---------------------------
     def norm(x):
         return str(x).strip().replace(".0", "").lstrip("0")
 
     merged["Vendor"] = merged["Vendor"].apply(norm)
 
     owner_df.columns = owner_df.columns.str.strip()
-
     owner_df["Supplier #"] = owner_df["Supplier #"].apply(norm)
 
     supplier_to_buyer = dict(
@@ -63,34 +66,29 @@ def build_combined_output(forecast_df,commits_df,owner_df,forecast_start_date,fo
     )
 
     merged["Assigned Buyer"] = merged["Vendor"].map(supplier_to_buyer)
-
     merged["Assigned Buyer"] = merged["Assigned Buyer"].fillna("UNKNOWN")
 
     merged = merged[
         merged["Material"].notna() &
-        merged["Qty Rcvd"].notna()
+        merged["Quantity Received"].notna()
     ]
 
     merged = apply_risk_model(merged)
 
     # ---------------------------
     # Final Output
-    final = merged.rename(columns={"Commit Dt by Suppl": "Vendor Commit"})[[
+    final = merged.rename(columns={"Commit Dt by Suppl": "Vendor Commit"})
+    final["Vendor Commit"] = pd.to_datetime(final["Vendor Commit"]).dt.date
+    final = final[[
         "Material",
         "Vendor Name",
-        "Vendor",
         "Vendor Commit",
         "Commit Qty",
         "Probability",
         "Risk",
         "Confidence Interval",
         "Confidence",
-         "Assigned Buyer"
+        "Assigned Buyer"
     ]]
 
-    # ensure required columns exist
-    for col in ["Vendor", "Vendor Name"]:
-        if col not in merged.columns:
-            merged[col] = "UNKNOWN"
-
-    return final 
+    return final

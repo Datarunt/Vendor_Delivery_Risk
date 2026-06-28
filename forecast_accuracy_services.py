@@ -4,22 +4,22 @@ from model import xgboost_forecast_with_uncertainty
 
 def calculate_forecast_accuracy(df, forecast_horizon):
     # ---------------------------
-    # 9. FORECAST ACCURACY CALCULATION
-    cutoff = df["Date Rcvd"].max() - pd.Timedelta(days=forecast_horizon)
-    train = df[df["Date Rcvd"] <= cutoff]
-    test = df[df["Date Rcvd"] > cutoff]
+    # FORECAST ACCURACY CALCULATION
+    cutoff = df["Date Received"].max() - pd.Timedelta(days=forecast_horizon)
+    train = df[df["Date Received"] <= cutoff]
+    test = df[df["Date Received"] > cutoff]
 
     acc_df = pd.DataFrame()
     if not test.empty:
-        acc_dates = pd.date_range(test["Date Rcvd"].min(), test["Date Rcvd"].max(), freq="D")
+        acc_dates = pd.date_range(test["Date Received"].min(), test["Date Received"].max(), freq="D")
         acc_parts = []
         for mat, g in sorted(train.groupby("Material"), key=lambda x: x[0]):
             try:
                 preds, sigma = xgboost_forecast_with_uncertainty(
-                        g["Qty Rcvd"],
-                        g["Date Rcvd"],
+                        g["Quantity Received"],
+                        g["Date Received"],
                         acc_dates,
-                        g["Description"],
+                        g["Days Late Classification"],
                         g["Vendor Name"]
                     )
             except Exception as e:
@@ -27,18 +27,18 @@ def calculate_forecast_accuracy(df, forecast_horizon):
                 continue
             acc_parts.append(pd.DataFrame({
                 "Material": [mat] * len(acc_dates),
-                "Date Rcvd": acc_dates,
-                "Qty Rcvd": preds
+                "Date Received": acc_dates,
+                "Quantity Received": preds
             }))
         if acc_parts:
             acc_df = pd.concat(acc_parts, ignore_index=True)
-            
 
     merged = acc_df.merge(
-    test[['Material', 'Date Rcvd', 'Qty Rcvd']],
-    on=['Material', 'Date Rcvd'],
-    how='inner',
-    suffixes=('_pred', '_true'))
+        test[['Material', 'Date Received', 'Quantity Received']],
+        on=['Material', 'Date Received'],
+        how='inner',
+        suffixes=('_pred', '_true')
+    )
 
     if merged.empty:
         accuracy = {
@@ -49,8 +49,8 @@ def calculate_forecast_accuracy(df, forecast_horizon):
             "R2": "N/A"
         }
     else:
-        y_true = merged['Qty Rcvd_true'].astype(float)
-        y_pred = merged['Qty Rcvd_pred'].astype(float)
+        y_true = merged['Quantity Received_true'].astype(float)
+        y_pred = merged['Quantity Received_pred'].astype(float)
         errors = np.maximum(y_true - y_pred, 0)
         ss_res = np.sum((y_true - y_pred) ** 2)
         ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
@@ -62,5 +62,5 @@ def calculate_forecast_accuracy(df, forecast_horizon):
             "MAPE": f"{(np.mean(errors / y_true.clip(lower=1)) * 100):.2f}%",
             "R2": round(r2, 4)
         }
-        
+
     return acc_df, accuracy

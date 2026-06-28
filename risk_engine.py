@@ -24,7 +24,6 @@ def evaluate_risk_row(mu, sigma, commit_qty):
         prob_pct = round(prob * 100)
 
         # Risk classification
-        
         if prob_pct < 60:
             risk = "HIGH"
         elif prob_pct <= 85:
@@ -53,17 +52,16 @@ def evaluate_risk_row(mu, sigma, commit_qty):
 def apply_risk_model(df):
     """
     Adds Probability, Risk, Confidence Interval, and Confidence columns
-    to a dataframe with columns: 'Qty Rcvd', 'Sigma', 'Commit Qty'.
+    to a dataframe with columns: 'Quantity Received', 'Sigma', 'Commit Qty'.
     """
     # Ensure numeric types
-    cols = ["Qty Rcvd", "Sigma", "Commit Qty"]
+    cols = ["Quantity Received", "Sigma", "Commit Qty"]
 
     for c in cols:
         df[c] = pd.to_numeric(df[c], errors="coerce")
 
-
     results = df.apply(
-        lambda r: evaluate_risk_row(r["Qty Rcvd"], r["Sigma"], r["Commit Qty"]),
+        lambda r: evaluate_risk_row(r["Quantity Received"], r["Sigma"], r["Commit Qty"]),
         axis=1
     )
 
