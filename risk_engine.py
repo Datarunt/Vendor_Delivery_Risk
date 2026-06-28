@@ -24,10 +24,8 @@ def evaluate_risk_row(mu, sigma, commit_qty):
         prob_pct = round(prob * 100)
 
         # Risk classification
-        if prob_pct < 60:
+        if prob_pct < 75:
             risk = "HIGH"
-        elif prob_pct <= 85:
-            risk = "MED"
         else:
             risk = "LOW"
 
