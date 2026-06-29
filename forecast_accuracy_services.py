@@ -5,6 +5,11 @@ from model import xgboost_forecast_with_uncertainty
 def calculate_forecast_accuracy(df, forecast_horizon):
     # ---------------------------
     # FORECAST ACCURACY CALCULATION
+
+    df = df.dropna(subset=["Date Received"])
+    df["Date Received"] = pd.to_datetime(df["Date Received"], errors="coerce")
+    df = df.dropna(subset=["Date Received"])
+    
     cutoff = df["Date Received"].max() - pd.Timedelta(days=forecast_horizon)
     train = df[df["Date Received"] <= cutoff]
     test = df[df["Date Received"] > cutoff]
