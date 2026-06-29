@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 
 def load_historical_file(hist_file):
 
@@ -21,9 +22,13 @@ def load_historical_file(hist_file):
     # 2. KEEP REQUIRED COLUMNS
     KEEP_COLUMNS = [
         'Vendor', 'Material', 'Date Received', 'Quantity Due', 'Quantity Received',
-        'Days Late Classification', 'Number of Days Late'
+        'Number of Days Late'
     ]
     df = df[KEEP_COLUMNS].copy()
+
+    # add Days Late Classification if not present
+    if 'Days Late Classification' not in df.columns:
+        df['Days Late Classification'] = None
     df.rename(columns={'Vendor': 'Vendor Name'}, inplace=True)
 
     # ---------------------------
@@ -44,6 +49,29 @@ def load_historical_file(hist_file):
     df['Number of Days Late'] = pd.to_numeric(df['Number of Days Late'], errors='coerce')
 
     # ---------------------------
+    # 4b. DERIVE DAYS LATE CLASSIFICATION IF MISSING
+    if 'Days Late Classification' not in df.columns or df['Days Late Classification'].isna().all():
+        df['Days Late Classification'] = np.select(
+            [
+                df['Number of Days Late'] < 0,
+                df['Number of Days Late'] == 0,
+                df['Number of Days Late'] == 1,
+                df['Number of Days Late'].between(2, 4),
+                df['Number of Days Late'].between(5, 15),
+                df['Number of Days Late'] > 15,
+            ],
+            [
+                "Miss / Early",
+                "Hit / On Time",
+                "Miss / 1 Day Late",
+                "Miss / 2-4 Calendar Days",
+                "Miss / 5-15 Calendar Days",
+                "Miss / > 15 Calendar Days",
+            ],
+            default="Hit / On Time"
+        )
+    # ---------------------------
+   
     # 5. ADJUST DAYS LATE FOR OVER-DELIVERY
     df['Number of Days Late'] = df.apply(
         lambda row: 0 if row['Quantity Received'] >= row['Quantity Due'] else row['Number of Days Late'],

@@ -135,7 +135,8 @@ def run_forecast():
 
     if hist_file and hist_file.filename:
         hist_file = remap_to_filestorage(hist_file, hist_mapping)
-    new_otd_upload = remap_to_filestorage(new_otd_upload, otd_mapping)
+    if new_otd_upload and new_otd_upload.filename:
+        new_otd_upload = remap_to_filestorage(new_otd_upload, otd_mapping)
     commit_file = remap_to_filestorage(commit_file, commit_mapping)
     owner_file = remap_to_filestorage(owner_file, owner_mapping)
 
@@ -156,7 +157,7 @@ def run_forecast():
     if not owner_file or not allowed_file(owner_file.filename):
         return "Invalid owner matrix file", 400
     
-    if not new_otd_upload or not allowed_file(new_otd_upload.filename):
+    if new_otd_upload and new_otd_upload.filename and not allowed_file(new_otd_upload.filename):
         return "Invalid New OTD Data file", 400
 
 

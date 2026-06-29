@@ -58,13 +58,13 @@
 
     <form action="/run_forecast" method="post" enctype="multipart/form-data">
 
-        <label>Upload Old Historical Performance File (Optional)</label>
+        <label>Upload Historical Performance File Type 1 (Optional)</label>
         <input type="file" name="hist_file" accept=".xlsx,.xls,.csv"
                onchange="loadColumns(this, 'hist_mapping')">
         <div id="hist_mapping"></div>
 
-        <label>Upload Current Historical Performance File</label>
-        <input type="file" name="new_otd_file" accept=".xlsx,.xls,.csv" required
+        <label>Upload Historical Performance File Type 2 (Optional)</label>
+        <input type="file" name="new_otd_file" accept=".xlsx,.xls,.csv"
                onchange="loadColumns(this, 'otd_mapping')">
         <div id="otd_mapping"></div>
 
