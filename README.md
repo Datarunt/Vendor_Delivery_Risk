@@ -1,6 +1,6 @@
 # Vendor Delivery Risk Predictor
 
-A machine learning system that predicts whether a vendor will deliver the quantity they committed to and flags them as HIGH, MED, or LOW risk before the delivery date arrives.
+A machine learning system that predicts whether a vendor will deliver the quantity they committed to and flags them as HIGH or LOW risk before the delivery date arrives.
 
 ---
 
