@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from xgboost import XGBRegressor
 
-def xgboost_forecast_with_uncertainty(train,dates,future_dates,descriptions,vendor_names):
+def xgboost_forecast_with_uncertainty(train, dates, future_dates, descriptions, vendor_performance):
     if len(train) < 5:
         raise ValueError("Insufficient data")
 
@@ -20,14 +20,22 @@ def xgboost_forecast_with_uncertainty(train,dates,future_dates,descriptions,vend
     desc_mean = desc_numeric.mean()
 
     # ---------------------------
-    # 2. Vendor Encoding (NEW)
-    vendor_encoded, vendor_uniques = pd.factorize(
-        vendor_names.astype(str).str.upper().str.strip()
-    )
+    # 2. Vendor Encoding -- uses each vendor's actual historical
+    # average days late (precomputed in data_processing.py) instead
+    # of an arbitrary factorized ID. This carries real performance
+    # signal: a vendor who is reliably 10 days late now looks
+    # meaningfully different from one who is reliably on time,
+    # rather than just being "vendor number 7" vs "vendor number 12".
+    vendor_numeric = pd.to_numeric(vendor_performance, errors="coerce")
 
-    vendor_encoded = vendor_encoded.astype(float)
-    future_vendor = np.full(len(future_dates), vendor_encoded.mean())
-      
+    if vendor_numeric.notna().any():
+        vendor_fill_value = vendor_numeric.mean()
+    else:
+        vendor_fill_value = 0.0
+
+    vendor_encoded = vendor_numeric.fillna(vendor_fill_value).astype(float).values
+    future_vendor_value = vendor_encoded.mean() if len(vendor_encoded) else vendor_fill_value
+
     # ---------------------------
     # 3. Seasonality Encoding
     months = np.array([d.month for d in dates])
@@ -42,7 +50,7 @@ def xgboost_forecast_with_uncertainty(train,dates,future_dates,descriptions,vend
     X = np.column_stack([
         [d.toordinal() - base_date.toordinal() for d in dates],  # trend
         desc_numeric.values,                                   # description
-        vendor_encoded,                                        # vendor feature
+        vendor_encoded,                                        # vendor performance feature
         month_dummies                                          # seasonality
     ])
 
@@ -84,7 +92,7 @@ def xgboost_forecast_with_uncertainty(train,dates,future_dates,descriptions,vend
     X_future = np.column_stack([
         [d.toordinal() - base_date.toordinal() for d in future_dates],
         np.full(len(future_dates), desc_mean),
-        np.full(len(future_dates), vendor_encoded.mean()),
+        np.full(len(future_dates), future_vendor_value),
         future_month_dummies
     ])
     

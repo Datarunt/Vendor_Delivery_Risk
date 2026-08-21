@@ -25,7 +25,7 @@ def calculate_forecast_accuracy(df, forecast_horizon):
                         g["Date Received"],
                         acc_dates,
                         g["Days Late Classification"],
-                        g["Vendor Name"]
+                        g["Avg Days Late"]
                     )
             except Exception as e:
                 print(f"❌ FORECAST FAILED | Material={mat} | Error={e}")

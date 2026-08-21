@@ -40,7 +40,7 @@ def build_forecast(df, forecast_start_date, forecast_horizon):
                 g['Date Received'],
                 future_dates,
                 g['Days Late Classification'],
-                g['Vendor Name']
+                g['Avg Days Late']
             )
 
         except:

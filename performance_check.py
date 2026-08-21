@@ -114,54 +114,90 @@ hist_df = hist_df.sort_values(
 # -----------------------------
 # BUILD METRICS
 # -----------------------------
-cum_actuals = []
-cum_commits = []
-late_flags = []
+# For each material, commit rows are treated as consecutive, non-
+# overlapping periods. The first period per material has no lower
+# bound -- it's simply every historical receipt up through that first
+# commit date. Every later period's OWN actuals are bounded below by
+# the previous commit date (exclusive), so a physical receipt is
+# never counted as satisfying two different periods at once.
+#
+# On top of that, a running carryover applies symmetrically:
+#   - SURPLUS (a period received more than it needed) rolls forward
+#     and adds to the next period's available actuals -- extra units
+#     don't just vanish because they arrived "early".
+#   - SHORTFALL (a period received less than it needed) rolls forward
+#     and adds to the next period's required commit -- a vendor who
+#     falls behind stays on the hook for the make-up quantity, it
+#     doesn't just reset each period.
+risk_df = risk_df.reset_index(drop=True)
 
-for idx, row in risk_df.iterrows():
+cum_actual_map = {}
+cum_commit_map = {}
+late_flag_map = {}
 
-    material = row["Material"]
-    vendor_commit = row["Vendor Commit"]
+for material, group in risk_df.groupby("Material", sort=False):
 
-    # historical data for material
-    hist_material = hist_df[
-        hist_df["Material"] == material
-    ]
+    group = group.sort_values("Vendor Commit")
+    hist_material = hist_df[hist_df["Material"] == material]
 
-    # risk rows for material
-    risk_material = risk_df[
-        (risk_df["Material"] == material) &
-        (risk_df["Vendor Commit"] <= vendor_commit)
-    ]
+    previous_commit_date = None
+    carry_actual = 0.0   # unused surplus rolling into the next period
+    carry_commit = 0.0   # unmet shortfall rolling into the next period
 
-    # cumulative actuals up to commit date
-    actual_total = hist_material[
-        hist_material["Document Date"] <= vendor_commit
-    ]["Quantity"].sum()
+    for idx, row in group.iterrows():
 
-    # cumulative commits up to commit date
-    commit_total = risk_material["Commit Qty"].sum()
+        vendor_commit = row["Vendor Commit"]
 
-    # late deliveries
-    has_late = (
-        hist_material["Document Date"] > vendor_commit
-    ).any()
+        # commit quantity for THIS specific commit date only. Commit
+        # data is a point-in-time snapshot (e.g. pulled 4/27) -- each
+        # distinct Commit Dt by Suppl is its own separate obligation,
+        # not additional demand stacked on top of an earlier-dated
+        # commit. Rows sharing the exact same commit date ARE
+        # combined (e.g. two same-day split-shipment lines), but
+        # different dates are independent and are not summed across
+        # each other.
+        own_commit = risk_df[
+            (risk_df["Material"] == material) &
+            (risk_df["Vendor Commit"] == vendor_commit)
+        ]["Commit Qty"].sum()
 
-    cum_actuals.append(actual_total)
-    cum_commits.append(commit_total)
-    late_flags.append(has_late)
+        # this period's own actuals only
+        if previous_commit_date is None:
+            period_mask = (
+                hist_material["Document Date"] <= vendor_commit
+            )
+        else:
+            period_mask = (
+                (hist_material["Document Date"] > previous_commit_date) &
+                (hist_material["Document Date"] <= vendor_commit)
+            )
+
+        own_actual = hist_material[period_mask]["Quantity"].sum()
+
+        # apply carry-in from the previous period
+        commit_total = own_commit + carry_commit
+        actual_total = own_actual + carry_actual
+
+        has_late = (
+            hist_material["Document Date"] > vendor_commit
+        ).any()
+
+        cum_actual_map[idx] = actual_total
+        cum_commit_map[idx] = commit_total
+        late_flag_map[idx] = has_late
+
+        # compute what carries into the NEXT period
+        carry_actual = max(actual_total - commit_total, 0.0)
+        carry_commit = max(commit_total - actual_total, 0.0)
+
+        previous_commit_date = vendor_commit
 
 # -----------------------------
 # ADD METRICS
 # -----------------------------
-risk_df["Cum_Actual"] = cum_actuals
-risk_df["Cum_Commit"] = cum_commits
-risk_df["Has_Late_Delivery"] = late_flags
-
-# -----------------------------
-# PERFORMANCE LOGIC
-# -----------------------------
-risk_df["Performance"] = "INCORRECT"
+risk_df["Cum_Actual"] = risk_df.index.map(cum_actual_map)
+risk_df["Cum_Commit"] = risk_df.index.map(cum_commit_map)
+risk_df["Has_Late_Delivery"] = risk_df.index.map(late_flag_map)
 
 # -----------------------------
 # FULFILLMENT RATIO
@@ -174,47 +210,35 @@ risk_df["Fulfillment_Ratio"] = (
 # -----------------------------
 # ACTUAL RISK CLASSIFICATION
 # -----------------------------
-risk_df["Actual_Risk"] = np.select(
-    [
-        risk_df["Fulfillment_Ratio"] < 0.80,
-
-        (risk_df["Fulfillment_Ratio"] >= 0.80) &
-        (risk_df["Fulfillment_Ratio"] < 1.00),
-
-        risk_df["Fulfillment_Ratio"] >= 1.00
-    ],
-    [
-        "HIGH",
-        "MED",
-        "LOW"
-    ],
-    default="UNKNOWN"
+# NOTE: risk_engine.py collapsed HIGH/MED/LOW down to a binary
+# HIGH/LOW scheme (probability of meeting commitment < 75% = HIGH,
+# otherwise LOW). The ground-truth label here is rebuilt to match
+# that same 2-class scheme -- "did the vendor actually meet or
+# exceed what they committed to, yes or no" -- instead of the old
+# 3-tier version, which could never be scored as correct once the
+# model stopped predicting MED at all.
+risk_df["Actual_Risk"] = np.where(
+    risk_df["Fulfillment_Ratio"] >= 1.00,
+    "LOW",
+    "HIGH"
 )
 
 # -----------------------------
-# MED correct if ratio between
-# 80% and 99%
+# PERFORMANCE LOGIC
 # -----------------------------
-risk_df.loc[
-    (risk_df["Risk"] == "MED") &
-    (
-        (risk_df["Fulfillment_Ratio"] >= 0.80) &
-        (risk_df["Fulfillment_Ratio"] < 1.00)
-    ),
-    "Performance"
-] = "CORRECT"
+risk_df["Performance"] = "INCORRECT"
 
 # LOW correct
 risk_df.loc[
     (risk_df["Risk"] == "LOW") &
-    (risk_df["Cum_Actual"] >= risk_df["Cum_Commit"]),
+    (risk_df["Actual_Risk"] == "LOW"),
     "Performance"
 ] = "CORRECT"
 
 # HIGH correct
 risk_df.loc[
     (risk_df["Risk"] == "HIGH") &
-    (risk_df["Cum_Actual"] < risk_df["Cum_Commit"]),
+    (risk_df["Actual_Risk"] == "HIGH"),
     "Performance"
 ] = "CORRECT"
 
@@ -238,7 +262,7 @@ final_df = final_df[
 # -----------------------------
 # CONFUSION MATRIX
 # -----------------------------
-labels = ["HIGH", "MED", "LOW"]
+labels = ["HIGH", "LOW"]
 
 cm = confusion_matrix(
     final_df["Actual_Risk"],
@@ -258,7 +282,7 @@ cm_df = pd.DataFrame(
 report = classification_report(
     final_df["Actual_Risk"],
     final_df["Risk"],
-    labels=["HIGH", "MED", "LOW"],
+    labels=labels,
     output_dict=True,
     zero_division=0
 )

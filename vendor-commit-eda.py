@@ -7,8 +7,38 @@ from scipy.stats import skew
 import matplotlib.pyplot as plt
 from docx import Document
 from docx.shared import Inches
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 import tempfile
 import os
+
+def prevent_table_row_split(table):
+    """
+    Prevent individual table rows from splitting across a page break.
+    When every row is protected this way, Word moves the whole table
+    to the next page as a block instead of cutting a row in half.
+    Note: if a single table is taller than one full page, some
+    splitting is unavoidable no matter what -- this only stops
+    mid-row breaks.
+    """
+    for row in table.rows:
+        trPr = row._tr.get_or_add_trPr()
+        cant_split = OxmlElement("w:cantSplit")
+        trPr.append(cant_split)
+
+def set_repeat_header_row(table):
+    """
+    Mark the first (header) row so it automatically repeats at the
+    top of every page the table spans. This is what actually stops
+    a split table from looking "cut off" -- if it does span two
+    pages, the column labels show up again on the next page instead
+    of leaving a block of unlabeled data.
+    """
+    header_row = table.rows[0]
+    trPr = header_row._tr.get_or_add_trPr()
+    tbl_header = OxmlElement("w:tblHeader")
+    tbl_header.set(qn("w:val"), "true")
+    trPr.append(tbl_header)
 
 def add_dataframe_table(doc, df, title=None):
     """
@@ -16,7 +46,8 @@ def add_dataframe_table(doc, df, title=None):
     """
 
     if title:
-        doc.add_heading(title, level=2)
+        heading = doc.add_heading(title, level=2)
+        heading.paragraph_format.keep_with_next = True
 
     table = doc.add_table(
         rows=df.shape[0] + 1,
@@ -36,6 +67,9 @@ def add_dataframe_table(doc, df, title=None):
                 i + 1,
                 j
             ).text = str(df.iloc[i, j])
+
+    set_repeat_header_row(table)
+    prevent_table_row_split(table)
 
     doc.add_paragraph()
 
