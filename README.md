@@ -1,6 +1,6 @@
 # Vendor Delivery Risk Predictor
 
-A machine learning system that predicts whether a vendor will deliver the quantity they committed to and flags them as HIGH, MED, or LOW risk before the delivery date arrives.
+A machine learning system that predicts whether a vendor will deliver the quantity they committed to and flags them as HIGH or LOW risk before the delivery date arrives.
 
 ---
 
@@ -23,7 +23,7 @@ Raw delivery history (Excel/CSV)
         ↓
   model.py                 ← XGBoost predicts expected delivery quantity
         ↓
-  risk_engine.py           ← converts forecast into a risk score (HIGH / MED / LOW)
+  risk_engine.py           ← converts forecast into a risk score (HIGH / LOW)
         ↓
   forecast_build_services.py  ← runs the forecast for each vendor/material
   forecast_accuracy_services.py ← measures how accurate past forecasts were
