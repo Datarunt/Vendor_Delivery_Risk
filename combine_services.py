@@ -1,7 +1,39 @@
 import pandas as pd
 from risk_engine import apply_risk_model
 
-def build_combined_output(forecast_df,commits_df,owner_df,forecast_start_date,forecast_horizon):
+
+# ---------------------------
+# COMMIT DATE AGGREGATION
+def aggregate_commit_dates(dates, aggregation):
+    """
+    Buckets each commit date according to the chosen aggregation level.
+
+    - "day"   : no change (current/default behavior)
+    - "week"  : rolled forward to the coming Sunday for that date
+                (if the date already IS a Sunday, it stays put)
+    - "month" : rolled forward to the last calendar day of that month
+                (if the date already IS the last day, it stays put)
+
+    Bucketing dates this way means commits that land in the same
+    week/month share the same "Commit Dt by Suppl" value, so the
+    existing groupby(["Material", "Commit Dt by Suppl"]).sum() below
+    naturally combines their Commit Qty together.
+    """
+    aggregation = (aggregation or "day").strip().lower()
+
+    if aggregation == "week":
+        # Monday=0 ... Sunday=6 -> days needed to reach the coming Sunday
+        days_until_sunday = (6 - dates.dt.dayofweek) % 7
+        return dates + pd.to_timedelta(days_until_sunday, unit="D")
+
+    elif aggregation == "month":
+        return dates + pd.offsets.MonthEnd(0)
+
+    # default: "day" (or anything unrecognized) -> unchanged
+    return dates
+
+
+def build_combined_output(forecast_df,commits_df,owner_df,forecast_start_date,forecast_horizon,aggregation="day"):
 
 
 
@@ -16,16 +48,47 @@ def build_combined_output(forecast_df,commits_df,owner_df,forecast_start_date,fo
     start = forecast_start_date
     end = start + pd.Timedelta(days=forecast_horizon - 1)
 
+    # Filter to the forecast window FIRST, using each commit's real due
+    # date -- then bucket into week/month. This way the window boundary
+    # is judged on the actual commit date, not the post-aggregation one.
     commits_window = commits_df[(commits_df["Commit Dt by Suppl"] >= start) &
                                 (commits_df["Commit Dt by Suppl"] <= end)].copy()
+
+    commits_window["Commit Dt by Suppl"] = aggregate_commit_dates(
+        commits_window["Commit Dt by Suppl"], aggregation
+    )
+
     forecast_window = forecast_df[(forecast_df["Date Received"] >= start) &
                                   (forecast_df["Date Received"] <= end) &
                                   (forecast_df["is_forecast"] == True)].copy()
 
-    # dedup - keep row with lowest sigma (most confident forecast)
+    # dedup - keep row with lowest sigma (most confident forecast) per day
     forecast_window = forecast_window.sort_values("Sigma").drop_duplicates(
         subset=["Material", "Date Received"], keep="first"
     )
+
+    # Bucket the forecast dates the SAME way the commit dates were bucketed,
+    # then combine the daily forecasts that fall in the same bucket:
+    #   - Quantity Received (predicted qty) is summed -> total expected
+    #     delivery across the whole week/month, matching the summed commit.
+    #   - Sigma is combined as sqrt(sum of squares), the standard way to
+    #     combine uncertainty across independent daily forecasts, rather
+    #     than just keeping one day's sigma.
+    # For "day" aggregation this is a no-op: each bucket has exactly one
+    # row already, so the sum/combine just returns that same row's values.
+    forecast_window["Date Received"] = aggregate_commit_dates(
+        forecast_window["Date Received"], aggregation
+    )
+
+    forecast_agg_dict = {"Quantity Received": "sum"}
+    if "Sigma" in forecast_window.columns:
+        forecast_agg_dict["Sigma"] = lambda s: (s.pow(2).sum()) ** 0.5
+    if "Vendor Name" in forecast_window.columns:
+        forecast_agg_dict["Vendor Name"] = "first"
+
+    forecast_window = forecast_window.groupby(
+        ["Material", "Date Received"], as_index=False
+    ).agg(forecast_agg_dict)
 
     # ---------------------------
     # Aggregate Commits First

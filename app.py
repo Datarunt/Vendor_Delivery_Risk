@@ -29,6 +29,7 @@ new_otd_file = None
 forecast_start_date = None
 forecast_horizon = 14
 accuracy_metrics = None
+commit_aggregation = "day"
 
 # --------------------------
 # HELPERS
@@ -69,8 +70,8 @@ def index():
         "index.html",
         forecast_ready=forecast_csv is not None,
         commits_csv_ready=commits_csv is not None,
-        owner_matrix_ready=owner_matrix_csv is not None
-        
+        owner_matrix_ready=owner_matrix_csv is not None,
+        selected_aggregation=commit_aggregation
     )
 
 @app.route("/run_forecast", methods=["POST"])
@@ -81,6 +82,7 @@ def run_forecast():
     global forecast_start_date
     global forecast_horizon
     global accuracy_metrics
+    global commit_aggregation
 
     hist_file = request.files.get("hist_file")
     commit_file = request.files.get("commit_file")
@@ -148,6 +150,8 @@ def run_forecast():
         request.form.get("horizon", 14)
     )
 
+    commit_aggregation = request.form.get("aggregation", "day")
+
     if hist_file and hist_file.filename and not allowed_file(hist_file.filename):
         return "Invalid historical file", 400
 
@@ -180,7 +184,8 @@ def run_forecast():
         forecast_ready=True,
         commits_csv_ready=True,
         owner_matrix_ready=True,
-        accuracy=accuracy_metrics
+        accuracy=accuracy_metrics,
+        selected_aggregation=commit_aggregation
     )
     
 
@@ -191,7 +196,7 @@ def download_forecast():
 
 @app.route("/combine", methods=["POST"])
 def combine():
-    global forecast_csv, commits_csv, owner_matrix_csv,new_otd_file
+    global forecast_csv, commits_csv, owner_matrix_csv,new_otd_file, commit_aggregation
 
     forecast_df = pd.read_csv(BytesIO(forecast_csv))
     commits_df = pd.read_csv(BytesIO(commits_csv))
@@ -204,7 +209,8 @@ def combine():
         owner_df=owner_df,
         #new_otd_df = new_otd_df,
         forecast_start_date=forecast_start_date,
-        forecast_horizon=forecast_horizon
+        forecast_horizon=forecast_horizon,
+        aggregation=commit_aggregation
     )
 
     # ---------------------------

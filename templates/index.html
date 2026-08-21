@@ -84,6 +84,13 @@
         <label>Forecast Window in Days (Max = 90)</label>
         <input type="number" name="horizon" min="1" max="90" value="14" required>
 
+        <label>Commit Aggregation</label>
+        <select name="aggregation">
+            <option value="day" {% if selected_aggregation == 'day' or not selected_aggregation %}selected{% endif %}>Day (no aggregation)</option>
+            <option value="week" {% if selected_aggregation == 'week' %}selected{% endif %}>Week (roll each commit to the coming Sunday, sum by week)</option>
+            <option value="month" {% if selected_aggregation == 'month' %}selected{% endif %}>Month (roll each commit to month end, sum by month)</option>
+        </select>
+
         <button type="submit">Predict Risk</button>
 
     </form>
