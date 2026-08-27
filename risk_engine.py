@@ -2,6 +2,12 @@ import pandas as pd
 import numpy as np
 from scipy.stats import norm
 
+# Confidence thresholds derived empirically from the tertiles of relative
+# CI width (width / mu) on the current dataset. Re-derive periodically as
+# vendor mix / order sizes shift — these are not universal constants.
+CONF_HIGH_THRESHOLD = 0.0356  # <= this -> HIGH confidence
+CONF_MED_THRESHOLD = 0.1227   # <= this -> MED confidence, else LOW
+
 # ---------------------------
 # Core logic: evaluate a single row
 def evaluate_risk_row(mu, sigma, commit_qty):
@@ -34,11 +40,18 @@ def evaluate_risk_row(mu, sigma, commit_qty):
         upper = mu + 1.96 * sigma
         ci_str = f"{round(lower,2)} - {round(upper,2)}"
 
-        # Confidence level based on interval width
+        # Confidence level based on RELATIVE interval width (width / mu),
+        # using empirically-derived tertile cut points rather than
+        # absolute units or guessed percentages.
         width = upper - lower
-        if width <= 5:
+        if mu and mu > 0:
+            rel_width = width / mu
+        else:
+            rel_width = float("inf")
+
+        if rel_width <= CONF_HIGH_THRESHOLD:
             conf_level = "HIGH"
-        elif width <= 15:
+        elif rel_width <= CONF_MED_THRESHOLD:
             conf_level = "MED"
         else:
             conf_level = "LOW"
