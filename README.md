@@ -14,7 +14,7 @@ Instead of finding out a vendor is unreliable after a missed delivery, this tool
 
 ---
 
-## How It Works — Plain English
+## How It Works
 
 ```
 Raw delivery history (Excel/CSV)
