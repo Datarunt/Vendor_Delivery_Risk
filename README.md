@@ -87,9 +87,8 @@ It uses a statistical method (normal distribution) to answer: *"Given our foreca
 **Risk labels:**
 | Probability of meeting commitment | Risk Label |
 |---|---|
-| Less than 60% | 🔴 HIGH |
-| 60% – 85% | 🟡 MED |
-| Greater than 85% | 🟢 LOW |
+| Less than 75% | 🔴 HIGH |
+| Greater than 75% | 🟢 LOW |
 
 It also produces a **confidence interval** — a range the actual delivery is likely to fall within (e.g. "between 72 and 98 units").
 
