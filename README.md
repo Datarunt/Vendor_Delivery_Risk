@@ -20,19 +20,20 @@ The goal is an early warning so the team can follow up, find alternatives, or ad
 
 In plain terms:
 
-1. Historical delivery data is cleaned, and each past delivery gets a lateness score.
+1. **Historical Commits** (past commits and what actually arrived against them) are cleaned. Each past delivery gets a lateness value, calculated from its commit date and actual delivery date, and a lateness score.
 2. For every Material + Vendor pair with at least 5 past deliveries, an XGBoost model is trained on past delivered **quantities** and forecasts a quantity for each day of the forecast window (`mu`). It also produces one uncertainty value (`sigma`): the spread of the model's errors on its own training data.
-3. Each vendor commit inside the window is matched to the forecast for the same material and date (rolled up to the week or month if selected).
+3. Each **Current Commit** inside the window is matched to the forecast for the same material and date (rolled up to the week or month if selected).
 4. The tool computes the probability that a normal distribution centered on `mu` with spread `sigma` reaches the committed quantity. Below 75% is flagged HIGH risk.
+5. Optionally, each commit is matched to the **Owner Matrix** by vendor code and/or vendor name to add the Assigned Buyer.
 
 ```
-app.py  (Flask web UI: upload files, pick start date / window / aggregation)
+app.py  (Flask web UI: upload files, map columns, pick start date / window / aggregation)
    |
    |  "Predict Risk" button
    v
-upload_services.py            <- reads the uploads, appends optional OTD data,
-   |                             runs the forecast, loads commits + owner matrix
-   |-- data_processing.py     <- cleans the historical file
+upload_services.py            <- reads the uploads, runs the forecast,
+   |                             loads Current Commits + Owner Matrix
+   |-- data_processing.py     <- cleans Historical Commits, calculates days late
    |-- forecast_build_services.py   <- loops over Material + Vendor pairs
    |      |-- model.py                     <- XGBoost quantity forecast + sigma
    |      '-- forecast_accuracy_services.py <- holdout backtest (accuracy metrics)
@@ -41,7 +42,7 @@ forecast (in memory, downloadable as CSV) + accuracy metrics shown in the UI
    |
    |  "Combine" button
    v
-combine_services.py           <- matches commits to forecasts, adds buyer/vendor info
+combine_services.py           <- matches commits to forecasts and to the Owner Matrix
    '-- risk_engine.py         <- probability, HIGH/LOW risk, interval, confidence
    |
    v
@@ -56,11 +57,15 @@ vendor-commit-eda.py          <- optional, standalone exploratory analysis
 ## Using the App
 
 1. Run `python app.py`. A browser tab opens at `http://127.0.0.1:5000`.
-2. Upload your files (see [Input Files](#input-files)). Historical File Type 1 and Type 2 are each optional, but at least one is required. The Portal Commit file and Owner Matrix are required.
-3. For each uploaded file, map your column names to the required fields. Columns whose names already match are pre-selected.
-4. Set the **Forecast Start Date**, the **Forecast Window** (1 to 90 days, default 14), and the **Commit Aggregation** (day, week, or month).
-5. Click **Predict Risk**. The forecast is built and the forecast accuracy metrics appear (AVG Commit Qty, R², MAE, RMSE, MAPE). You can download the raw forecast as a CSV.
-6. Click **Combine Forecast, Commits & Owner Matrix** to download `vendor_commit_risk.xlsx`.
+2. Upload the three files. All are required:
+   - **Historical Commits**
+   - **Current Commits**
+   - **Owner Matrix**
+3. A mapping table appears under each file. Pick which column in *your* file feeds each field. Where a column in your file matches the usual name (see [Input Files](#input-files)) it is pre-selected, but every header in the file is available in the dropdown.
+4. In Current Commits, tick **Vendor Code** and/or **Vendor Name** if you want commits matched to the Owner Matrix. Ticking one switches on its dropdown, and switches on the matching Owner Matrix column (see below).
+5. Set the **Forecast Start Date**, the **Forecast Window** (1 to 90 days, default 14), and the **Commit Aggregation** (day, week, or month).
+6. Click **Predict Risk**. The form will not submit, and says why, if a required column has not been chosen. The forecast is built and the forecast accuracy metrics appear (AVG Commit Qty, R², MAE, RMSE, MAPE). You can download the raw forecast as a CSV.
+7. Click **Combine Forecast, Commits & Owner Matrix** to download `vendor_commit_risk.xlsx`.
 
 Results are held in memory for the running server process, so the app is built for one user at a time.
 
@@ -68,73 +73,87 @@ Results are held in memory for the running server process, so the app is built f
 
 ## Input Files
 
-### Historical Performance File, Type 1 (optional)
+Only the columns you map are read; other columns in your files are ignored. Column names in your files can be anything, because you map them in the UI.
 
-| Required field | Description |
+### Historical Commits (required)
+
+Past commits and what was actually delivered against them, one row per delivery.
+
+| Field | What to map | Pre-selected if your file has |
+|---|---|---|
+| Material | Material / part number | `Material` |
+| Vendor | Vendor **name** | `Name 1` |
+| Commit Date | Date the vendor committed to deliver | `Date Due` |
+| Commit Qty | Quantity committed | `Qty Due` |
+| Actual Delivery Date | Date the delivery **actually arrived** | `Date Rcvd` |
+| Actual Delivery Qty | Quantity that actually arrived | `Qty Rcvd` |
+
+Days late is **not** mapped. It is calculated from Commit Date and Actual Delivery Date (see [`data_processing.py`](#data_processingpy---data-cleaning)). Rows missing either date are dropped.
+
+**Mapping the OTD extract** (`New_Historical.OTD.xlsx`). Its column names don't match the pre-selected ones, so choose them yourself:
+
+| Field | Column |
 |---|---|
-| Vendor | Vendor name (renamed to `Vendor Name` internally) |
-| Material | Material / part number |
-| Date Received | When the delivery arrived |
-| Quantity Due | Quantity ordered |
-| Quantity Received | Quantity actually received |
-| Number of Days Late | Days late (negative = early) |
+| Material | `Material` |
+| Vendor | `VENDOR_NAME` |
+| Commit Date | `Stat Date` |
+| Commit Qty | `QUANTITY` |
+| Actual Delivery Date | `Delivered in Full Date` (or `OTD_DT_SAT_IN_FULL_CORRECTED`, which is identical in this extract) |
+| Actual Delivery Qty | `Received Qty` |
 
-The UI also lists `Days Late Classification`, but the loader always derives the classification from `Number of Days Late`, so a mapped column is ignored.
+Do **not** use `Delivery Date` or `DELIVERY_DATE` as the Actual Delivery Date. Those include scheduled dates months after the last real receipt, which makes the accuracy metrics show N/A (see [Troubleshooting](#troubleshooting)).
 
-### Historical Performance File, Type 2 / "New OTD" file (optional)
+**Keep the history in the past.** Historical Commits should only contain deliveries that happened *before* the Forecast Start Date. If it includes later deliveries, the model is trained on the same period it will be scored against.
 
-| Required field | Description |
-|---|---|
-| Material | Material / part number |
-| VENDOR_NAME, VENDOR_ID | Vendor name and ID (leading zeros stripped from the ID) |
-| Stat Date | Start date used for the days-late calculation |
-| Delivered in Full Y/N | Whether the line was delivered in full |
-| Delivered in Full Date | Date it was delivered in full |
-| Month of OTD Measure | Month the miss was measured in |
-| DateDiff Measured Month | Number of months measured (for misses) |
-| Received Qty | Quantity received |
+### Current Commits (required)
 
-These rows are converted into the Type 1 format and appended to the historical data:
+The open commits to assess. Each row is a commit for a material on a date.
 
-- **Days late:** if delivered in full, `Delivered in Full Date - Stat Date`. Otherwise, the days from `Stat Date` through the end of the last measured month.
-- **Quantity:** `Received Qty` is used for both Quantity Due and Quantity Received, so over- and under-delivery are not captured for these rows.
+| Field | Required | Pre-selected if your file has | Description |
+|---|---|---|---|
+| Material | Yes | `Material` | Material / part number |
+| Commit Date | Yes | `Commit Dt by Suppl` | Date the vendor committed to deliver |
+| Commit Qty | Yes | `Commit Qty` | Quantity committed |
+| Vendor Code | Optional (tick) | `Vendor` | Used **only** to match the Owner Matrix |
+| Vendor Name | Optional (tick) | `Name 1` | Used to match the Owner Matrix, and as the vendor name in the output |
 
-### Portal Commit File (required)
+Vendor Code and Vendor Name are not read at all unless ticked. If neither is ticked, nothing is matched to the Owner Matrix and **Assigned Buyer is UNKNOWN for every row**. The Vendor Name column in the output then comes from the historical data.
 
-| Field | Description |
-|---|---|
-| Material | Material / part number |
-| Vendor | Vendor ID |
-| Commit Dt by Suppl | Date the vendor committed to deliver |
-| Commit Qty | Quantity the vendor committed |
-| Vendor Name | Optional. If missing, the name comes from the Owner Matrix, then falls back to the vendor ID |
+### Owner Matrix (required)
 
-### Owner Matrix File (required)
+Maps vendors to the buyer responsible for them.
 
-| Field | Description |
-|---|---|
-| Supplier # | Vendor ID (matched to `Vendor` in the commit file after stripping leading zeros) |
-| Assigned Buyer | Buyer responsible for the vendor |
-| Supplier Name or Vendor Name | Optional. Used to fill in vendor names |
+| Field | Required | Pre-selected if your file has | Description |
+|---|---|---|---|
+| Assigned Buyer | Yes | `Assigned Buyer` | Buyer responsible for the vendor |
+| Vendor Code (Supplier #) | Only if Vendor Code is ticked | `Supplier #` | Matched to the commit's Vendor Code |
+| Vendor Name (Supplier Name) | Only if Vendor Name is ticked | `Supplier Name` | Matched to the commit's Vendor Name |
+
+**How matching works:** vendor codes are matched first (trimmed and leading zeros removed; commit codes are also upper-cased, so keep the Owner Matrix codes in upper case). Commits still unmatched are then matched on vendor name (upper-cased, extra spaces ignored). Anything still unmatched is UNKNOWN. A blank code or name never matches.
 
 ---
 
 ## File-by-File Breakdown
 
 ### `app.py` - The Front Door
-Flask web app. Routes: `/` (upload form), `/get_columns` (reads a file's headers for the column-mapping table), `/run_forecast` (remaps columns, runs `upload_services`, stores the results), `/download_forecast.csv`, and `/combine` (runs `combine_services` and writes the Excel file with the **Risk Output** and **Accuracy** sheets). The server starts on port 5000 with `debug=True` and `host="0.0.0.0"`.
+Flask web app. Routes: `/` (upload form), `/get_columns` (reads a file's headers for the column-mapping table), `/run_forecast` (checks the uploads and mappings, remaps the files, runs `upload_services`, stores the results), `/download_forecast.csv`, and `/combine` (runs `combine_services` and writes the Excel file with the **Risk Output** and **Accuracy** sheets).
+
+Each uploaded file is rewritten to hold only the mapped fields, named the way the rest of the app expects. Required fields are checked in the browser (a message appears and the form doesn't submit) and again on the server (HTTP 400 with the same message). The server starts on port 5000 with `debug=True` and `host="0.0.0.0"`.
 
 ### `upload_services.py` - Ingestion and Forecast Orchestration
-Loads the historical file (if provided), converts and appends the OTD file (if provided), calls `build_forecast`, then reads the commit and owner matrix files. Returns the forecast, commits, and owner matrix as CSV bytes plus the accuracy metrics. It does **not** write the final Excel file (that happens in `app.py`).
+Loads Historical Commits, calls `build_forecast`, then reads the Current Commits and Owner Matrix files. For Current Commits it trims and upper-cases Material (and Vendor Code, if ticked) and renames `Commit Date` to `Commit Dt by Suppl` and `Vendor Code` to `Vendor` for the combine step. Returns the forecast, commits, and owner matrix as CSV bytes plus the accuracy metrics. It does **not** write the final Excel file (that happens in `app.py`).
+
+The file still contains older code for converting an OTD upload. The UI no longer offers that upload, so it is not used.
 
 ### `data_processing.py` - Data Cleaning
-Cleans the Type 1 historical file:
-- Keeps only the needed columns and renames `Vendor` to `Vendor Name`
+Cleans the Historical Commits file:
+- Keeps the six mapped fields and renames them for the rest of the app: `Vendor` to `Vendor Name`, `Commit Date` to `Date Due`, `Commit Qty` to `Quantity Due`, `Actual Delivery Date` to `Date Received`, `Actual Delivery Qty` to `Quantity Received`
 - Normalizes material numbers (takes the first token and strips trailing letters)
 - Fixes date and number formats
-- Derives `Days Late Classification` from `Number of Days Late`: Early, On Time, 1 Day Late, 2-4 Days, 5-15 Days, >15 Days
-- Sets `Number of Days Late` to 0 when `Quantity Received >= Quantity Due` (over-delivery is not a failure). This happens *after* the classification is derived, so an over-delivered but late row keeps its late classification
-- Drops rows with no days-late value or no received date
+- **Calculates `Number of Days Late`** as working days (Mon-Fri) from Commit Date to Actual Delivery Date. Weekends are skipped, and so are the days listed in `non_working_days()`: New Year's Day, Memorial Day, Independence Day, Labor Day, Thanksgiving and the day after, and Dec 24-31 (weekend holidays are taken on the nearest weekday). Early deliveries count as on time (0). Working days are used because the ERP's own "Days Late" column is measured that way. On the on-time and late rows of the 12/31/25 extract this gives the same number as that column about 96% of the time and the same lateness band 99.7% of the time. Edit `non_working_days()` to match your own plant calendar
+- Derives `Days Late Classification`: On Time, 1 Day Late, 2-4 Days, 5-15 Days, >15 Days
+- Sets `Number of Days Late` to 0 when `Quantity Received >= Quantity Due` (over-delivery is not a failure). This happens *after* the classification is derived, so an over-delivered but late row keeps its late classification. In the 12/31/25 extract 99.7% of rows are delivered in full, so days late (and therefore `Avg Days Late`) is close to 0 and lateness reaches the model mainly through the classification
+- Drops rows with no commit date or no actual delivery date
 - Adds `Avg Days Late`: each vendor's mean days late across all of their rows
 
 ### `model.py` - The Forecast Model
@@ -143,28 +162,31 @@ Trains an XGBoost regressor (50 trees, depth 3, learning rate 0.1, seed 42) on o
 | Feature | In training | At forecast time |
 |---|---|---|
 | Trend | Days since the first delivery | Days since the first delivery (extends past the training range) |
-| Delivery description score | Lateness score of *that same delivery*: on time 0, 1 day late 1, 2-4 days 3, 5-15 days 10, >15 days 20 (early = 0) | Set to the historical average |
+| Delivery description score | Lateness score of *that same delivery*: on time 0, 1 day late 1, 2-4 days 3, 5-15 days 10, >15 days 20 | Set to the historical average |
 | Vendor performance | Vendor's `Avg Days Late` | Set to the historical average |
 | Seasonality | Month of the delivery | Month of the forecast date |
 
 **Output:** an array of forecast quantities (`mu`, floored at 0), one per day of the window, plus a single `sigma` (standard deviation of the training residuals). Because the description score and vendor value are constants at forecast time, the forecast varies across the window only through the date trend and month.
 
+Commit Date and Commit Qty from Historical Commits are **not** model inputs. They only feed the lateness calculation and the over-delivery rule above.
+
 ### `forecast_build_services.py` - Forecast Runner
 Builds the list of future dates, runs the accuracy backtest, and loops through every Material + Vendor pair calling `model.py`. Pairs with fewer than 5 historical rows (or any other error) are skipped silently. Output rows are labeled with the *latest* vendor seen for the material.
 
 ### `forecast_accuracy_services.py` - Forecast Accuracy Tracker
-A holdout backtest: the last `horizon` days of history are held out, the model is trained on everything earlier (per material), and its forecasts are compared with the deliveries that actually arrived on matching material/date rows. Reports:
+A holdout backtest: the last `horizon` days of history (by Actual Delivery Date) are held out, the model is trained on everything earlier (per material), and its forecasts are compared with the deliveries that actually arrived on matching material/date rows. Reports:
 
 - `AVG_COMMIT_QTY` (mean actual quantity of the matched rows), `MAE`, `RMSE`, `MAPE`, `R2`
 
-MAE, RMSE, and MAPE only count under-prediction (shortfalls); over-prediction counts as zero error. The result is one set of numbers for the whole run, not per vendor. If nothing matches, all values are "N/A".
+MAE, RMSE, and MAPE only count under-prediction (shortfalls); over-prediction counts as zero error. The result is one set of numbers for the whole run, not per vendor. If nothing can be compared, all values are "N/A" (see [Troubleshooting](#troubleshooting)).
 
 ### `combine_services.py` - The Assembler
 - Filters commits and forecasts to the forecast window and rolls dates up by the chosen aggregation: **day** (no change), **week** (coming Sunday), **month** (month end)
 - Commit quantities are summed per Material + bucket
 - For week and month buckets, the forecast is taken from the **single latest forecast day in the bucket** (daily forecasts are not summed)
 - Matches commits to forecasts on Material + date; if several forecasts share a material and date, the one with the lowest sigma is kept
-- Fills in vendor name and assigned buyer from the commit file and Owner Matrix
+- Assigns the buyer from the Owner Matrix: by Vendor Code first, then by Vendor Name, only for the fields the user ticked. Otherwise UNKNOWN
+- Vendor Name in the output: the Current Commits Vendor Name if ticked; otherwise the latest vendor seen for that material in the historical data; then the Owner Matrix name (matched by code), then the vendor code
 - Calls `risk_engine.py` and returns the final table
 - **Commits with no matching forecast are dropped** from the output (a warning is printed to the console)
 
@@ -192,7 +214,7 @@ Special cases: if `mu`, `sigma`, or `Commit Qty` is missing, the row is scored 0
 Run separately (`python performance_check.py`) after deliveries have happened. File dialogs ask for:
 
 1. The prediction file (`vendor_commit_risk.xlsx`, read from its **Risk Output** sheet)
-2. A receipts file with `Material`, `Document Date`, and `Quantity` columns (a different format from the historical input file)
+2. A receipts file with `Material`, `Document Date`, and `Quantity` columns (a different format from the Historical Commits file)
 
 For each commit row, receipts are counted up to the commit date, with each period starting after the previous commit date for that material. Surplus and shortfall carry forward to the next period. Then:
 
@@ -218,7 +240,7 @@ A standalone script. It opens a file picker and a column-selection window, then 
 
 ## Model Performance
 
-Results from saved evaluation runs in `Data/Performance/`. Runs use different data and code versions, so re-run `performance_check.py` after any change.
+Results from saved evaluation runs in `Data/Performance/`. Runs use different data and code versions, and these predate the Historical Commits change (days late is now calculated from dates), so re-run `performance_check.py` after any change.
 
 | Run file | Records | Classes | Accuracy | HIGH precision | HIGH recall | Share of rows actually HIGH |
 |---|---|---|---|---|---|---|
@@ -228,17 +250,33 @@ Results from saved evaluation runs in `Data/Performance/`. Runs use different da
 
 **How to read this:** precision is the share of HIGH-flagged commits that turned out to be HIGH. In every run above it is *below* the overall share of HIGH outcomes, so a HIGH flag does not currently identify riskier commits than an average commit. The first run's 3-class accuracy is not comparable with the later 2-class runs (MED was removed from the risk labels). Until this improves, the labels should not be used to prioritize vendors.
 
+In the first two runs the model flagged about 70% of commits HIGH while roughly 40-44% were actually HIGH, so accuracy alone can look similar across very different inputs. Compare precision against the share of rows actually HIGH, not just accuracy, when judging a change.
+
+---
+
+## Troubleshooting
+
+**Forecast Accuracy shows N/A.** The accuracy backtest holds out the last *N* days (the Forecast Window) of Actual Delivery Date, and N/A means nothing could be compared. Common causes:
+
+- **The Actual Delivery Date column contains dates beyond the real receipts**, such as scheduled delivery dates. The latest date sets the holdout window, so one date months in the future moves the window past all your data. Map a true receipt-date column instead.
+- **The holdout materials have fewer than 5 earlier rows**, so no forecast could be built for them.
+- **The Forecast Window is very short and few deliveries fall inside it.** A longer window holds out more rows.
+
+**A commit is missing from the output.** Commits with no matching forecast are dropped. This happens when the material has no Material + Vendor pair with 5 or more historical rows, when the material numbers don't match after cleaning, or when the commit date is outside the forecast window.
+
+**Assigned Buyer is UNKNOWN.** Either neither Vendor Code nor Vendor Name was ticked in Current Commits, or the code/name in the commit file doesn't match the Owner Matrix.
+
 ---
 
 ## Known Limitations
 
 **Modeling**
 - The model forecasts delivery **quantity**. Nothing in it predicts whether a delivery arrives by the commit date, but `performance_check.py` scores quantity received by the commit date, so timing affects the scoring and not the prediction.
-- The vendor performance feature is a per-vendor average, and each model is trained on a single Material + Vendor pair, so it is the same value on every training row and carries no signal. OTD rows do not get an `Avg Days Late` value at all.
+- The vendor performance feature is a per-vendor average, and each model is trained on a single Material + Vendor pair, so it is the same value on every training row and carries no signal.
 - The delivery description score is the lateness of the same delivery whose quantity is being predicted, not earlier history, and it is replaced by the average at forecast time.
 - `sigma` is measured on the training data, so it underestimates true forecast error, and it is the same for every day of the window. A walk-forward (out-of-sample) sigma is planned.
 - Tree models cannot extrapolate the date trend beyond the training range.
-- A vendor needs at least 5 historical rows per Material + Vendor pair; otherwise it is skipped with no message.
+- A Material + Vendor pair needs at least 5 historical rows; otherwise it is skipped with no message.
 - The model is retrained on every run (and again for the accuracy backtest). No model file is saved.
 
 **Risk engine**
@@ -247,10 +285,12 @@ Results from saved evaluation runs in `Data/Performance/`. Runs use different da
 - The confidence cutoffs are fixed constants (see above).
 
 **Data handling**
+- Days late is calculated from the two dates, using an approximate holiday calendar. It matches the ERP column closely but not exactly.
 - For materials with more than one vendor, forecasts are matched on Material + date only (lowest sigma wins), and forecast rows are labeled with the latest vendor. This can attach one vendor's forecast to another vendor's commit.
-- Material numbers are normalized differently in the historical file (trailing letters stripped) and the commit file (trimmed and upper-cased only). Materials that don't match after these steps get no forecast.
+- Material numbers are normalized differently in Historical Commits (trailing letters stripped) and Current Commits (trimmed and upper-cased only). Materials that don't match after these steps get no forecast.
 - Commits with no matching forecast are dropped from the output.
 - The accuracy metrics ignore over-prediction and are computed once per run.
+- Nothing stops Historical Commits from containing deliveries after the Forecast Start Date (see [Input Files](#input-files)).
 
 **Operations**
 - Session state lives in module-level variables, so only one user can use a running server at a time.
@@ -283,7 +323,7 @@ Then open `http://localhost:5000` if the browser doesn't open on its own.
 | `app.py`, `*_services.py`, `data_processing.py`, `model.py`, `risk_engine.py` | Application code |
 | `performance_check.py` | Scores past predictions against actual receipts |
 | `vendor-commit-eda.py` | Exploratory analysis script |
-| `templates/index.html` | Web UI |
+| `templates/index.html` | Web UI (file upload and column mapping) |
 | `Data/` | Working files: Historical, Commits, Account Matrix, Actuals, Predictions, Performance, EDA |
 
 ---
