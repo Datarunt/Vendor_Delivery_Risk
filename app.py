@@ -31,6 +31,18 @@ forecast_horizon = 14
 accuracy_metrics = None
 commit_aggregation = "day"
 
+# Fields the user must map in the UI. Vendor Code and Vendor Name on the
+# Current Commits file are optional (ticked by the user), and the Owner Matrix
+# Supplier # / Supplier Name columns are only needed when the matching one is ticked.
+REQUIRED_FIELDS = {
+    "hist_mapping": [
+        "Material", "Vendor", "Commit Date", "Commit Qty",
+        "Actual Delivery Date", "Actual Delivery Qty"
+    ],
+    "commit_mapping": ["Material", "Commit Date", "Commit Qty"],
+    "owner_mapping": ["Assigned Buyer"],
+}
+
 # --------------------------
 # HELPERS
 def allowed_file(filename):
@@ -90,14 +102,31 @@ def run_forecast():
     new_otd_upload = request.files.get("new_otd_file")
 
     # --------------------------
+    # CHECK THE UPLOADS
+    if not hist_file or not hist_file.filename or not allowed_file(hist_file.filename):
+        return "Invalid or missing Historical Commits file", 400
+
+    if not commit_file or not commit_file.filename or not allowed_file(commit_file.filename):
+        return "Invalid or missing Current Commits file", 400
+
+    if not owner_file or not owner_file.filename or not allowed_file(owner_file.filename):
+        return "Invalid or missing Owner Matrix file", 400
+
+    if new_otd_upload and new_otd_upload.filename and not allowed_file(new_otd_upload.filename):
+        return "Invalid New OTD Data file", 400
+
+    # --------------------------
     # READ FIELD MAPPINGS FROM FORM
+    # Each mapping is a list of (column in the user's file, field the model needs).
+    # Optional fields the user left unticked are not submitted, so they are
+    # simply absent here.
     def get_mapping(prefix):
-        mapping = {}
+        pairs = []
         for key, value in request.form.items():
             if key.startswith(f"map_{prefix}__") and value:
                 required_field = key.replace(f"map_{prefix}__", "")
-                mapping[value] = required_field
-        return mapping
+                pairs.append((value, required_field))
+        return pairs
 
     hist_mapping = get_mapping("hist_mapping")
     otd_mapping = get_mapping("otd_mapping")
@@ -105,8 +134,45 @@ def run_forecast():
     owner_mapping = get_mapping("owner_mapping")
 
     # --------------------------
+    # MAKE SURE EVERY REQUIRED FIELD WAS MAPPED
+    def missing_fields(pairs, required):
+        mapped = {field for _, field in pairs}
+        return [f for f in required if f not in mapped]
+
+    problems = []
+
+    for label, pairs, required in (
+        ("Historical Commits", hist_mapping, REQUIRED_FIELDS["hist_mapping"]),
+        ("Current Commits", commit_mapping, REQUIRED_FIELDS["commit_mapping"]),
+        ("Owner Matrix", owner_mapping, REQUIRED_FIELDS["owner_mapping"]),
+    ):
+        missing = missing_fields(pairs, required)
+        if missing:
+            problems.append(f"{label}: select a column for {', '.join(missing)}")
+
+    commit_fields = {field for _, field in commit_mapping}
+    owner_fields = {field for _, field in owner_mapping}
+
+    if "Vendor Code" in commit_fields and "Supplier #" not in owner_fields:
+        problems.append(
+            "Owner Matrix: select the Vendor Code (Supplier #) column "
+            "to match on Vendor Code"
+        )
+
+    if "Vendor Name" in commit_fields and "Supplier Name" not in owner_fields:
+        problems.append(
+            "Owner Matrix: select the Vendor Name (Supplier Name) column "
+            "to match on Vendor Name"
+        )
+
+    if problems:
+        return "<br>".join(problems), 400
+
+    # --------------------------
     # APPLY MAPPINGS TO FILES
-    def remap_file(file, mapping):
+    # The remapped file holds ONLY the mapped fields, named the way the
+    # rest of the app expects them.
+    def remap_file(file, pairs):
         if file.filename.lower().endswith(".csv"):
             for enc in ("utf-8", "cp1252", "latin1"):
                 try:
@@ -117,9 +183,15 @@ def run_forecast():
         else:
             df = pd.read_excel(file)
         df.columns = df.columns.str.strip()
-        df = df.rename(columns=mapping)
+
+        remapped = pd.DataFrame({
+            field: df[source]
+            for source, field in pairs
+            if source in df.columns
+        })
+
         buf = BytesIO()
-        buf.write(df.to_csv(index=False).encode("utf-8"))
+        buf.write(remapped.to_csv(index=False).encode("utf-8"))
         buf.seek(0)
         buf.filename = "remapped.csv"
         buf.name = "remapped.csv"
@@ -127,16 +199,15 @@ def run_forecast():
 
     from werkzeug.datastructures import FileStorage
 
-    def remap_to_filestorage(file, mapping):
-        buf = remap_file(file, mapping)
+    def remap_to_filestorage(file, pairs):
+        buf = remap_file(file, pairs)
         return FileStorage(
             stream=buf,
             filename="remapped.csv",
             content_type="text/csv"
         )
 
-    if hist_file and hist_file.filename:
-        hist_file = remap_to_filestorage(hist_file, hist_mapping)
+    hist_file = remap_to_filestorage(hist_file, hist_mapping)
     if new_otd_upload and new_otd_upload.filename:
         new_otd_upload = remap_to_filestorage(new_otd_upload, otd_mapping)
     commit_file = remap_to_filestorage(commit_file, commit_mapping)
@@ -151,19 +222,6 @@ def run_forecast():
     )
 
     commit_aggregation = request.form.get("aggregation", "day")
-
-    if hist_file and hist_file.filename and not allowed_file(hist_file.filename):
-        return "Invalid historical file", 400
-
-    if not commit_file or not allowed_file(commit_file.filename):
-        return "Invalid commit file", 400
-
-    if not owner_file or not allowed_file(owner_file.filename):
-        return "Invalid owner matrix file", 400
-    
-    if new_otd_upload and new_otd_upload.filename and not allowed_file(new_otd_upload.filename):
-        return "Invalid New OTD Data file", 400
-
 
     (
         forecast_csv,

@@ -38,7 +38,7 @@
 
         {% if not forecast_ready and not commits_csv_ready and not owner_matrix_ready %}
 
-            Step 1: Upload all required files (Historical, Commits, Owner Matrix)
+            Step 1: Upload all required files (Historical Commits, Current Commits, Owner Matrix)
 
         {% elif forecast_ready and commits_csv_ready and not owner_matrix_ready %}
 
@@ -56,19 +56,14 @@
 
     </div>
 
-    <form action="/run_forecast" method="post" enctype="multipart/form-data">
+    <form id="mainForm" action="/run_forecast" method="post" enctype="multipart/form-data">
 
-        <label>Upload Historical Performance File Type 1 (Optional)</label>
-        <input type="file" name="hist_file" accept=".xlsx,.xls,.csv"
+        <label>Upload Historical Commits File</label>
+        <input type="file" name="hist_file" accept=".xlsx,.xls,.csv" required
                onchange="loadColumns(this, 'hist_mapping')">
         <div id="hist_mapping"></div>
 
-        <label>Upload Historical Performance File Type 2 (Optional)</label>
-        <input type="file" name="new_otd_file" accept=".xlsx,.xls,.csv"
-               onchange="loadColumns(this, 'otd_mapping')">
-        <div id="otd_mapping"></div>
-
-        <label>Upload Portal Commit File</label>
+        <label>Upload Current Commits File</label>
         <input type="file" name="commit_file" accept=".xlsx,.xls,.csv" required
                onchange="loadColumns(this, 'commit_mapping')">
         <div id="commit_mapping"></div>
@@ -121,31 +116,150 @@
 </div>
 
 <script>
-const REQUIRED_FIELDS = {
+// -------------------------------------------------------------------
+// Column mapping. For each uploaded file the user picks which column in
+// their file feeds each field the model needs. "defaults" are the column
+// names in the current data sets, used only to pre-select a column; the
+// user can pick any header from the list.
+// -------------------------------------------------------------------
+const FIELD_SPECS = {
     hist_mapping: [
-        "Vendor", "Material", "Date Received", "Quantity Due",
-        "Quantity Received", "Days Late Classification", "Number of Days Late"
-    ],
-    otd_mapping: [
-        "Material", "VENDOR_NAME", "VENDOR_ID",
-        "Stat Date", "Delivered in Full Y/N",
-        "Delivered in Full Date", "Month of OTD Measure",
-        "DateDiff Measured Month", "Received Qty"
+        { field: "Material",             defaults: ["Material"] },
+        { field: "Vendor",               defaults: ["Name 1"] },
+        { field: "Commit Date",          defaults: ["Date Due"] },
+        { field: "Commit Qty",           defaults: ["Qty Due"] },
+        { field: "Actual Delivery Date", defaults: ["Date Rcvd"] },
+        { field: "Actual Delivery Qty",  defaults: ["Qty Rcvd"] }
     ],
     commit_mapping: [
-        "Material", "Vendor", "Vendor Name", "Commit Dt by Suppl", "Commit Qty"
+        { field: "Material",    defaults: ["Material"] },
+        { field: "Vendor Code", defaults: ["Vendor"], optional: true,
+          hint: "Tick to match commits to the Owner Matrix by vendor code" },
+        { field: "Vendor Name", defaults: ["Name 1"], optional: true,
+          hint: "Tick to match commits to the Owner Matrix by vendor name" },
+        { field: "Commit Date", defaults: ["Commit Dt by Suppl"] },
+        { field: "Commit Qty",  defaults: ["Commit Qty"] }
     ],
     owner_mapping: [
-        "Supplier #", "Assigned Buyer"
+        { field: "Assigned Buyer", defaults: ["Assigned Buyer"] },
+        { field: "Supplier #", label: "Vendor Code (Supplier #)", defaults: ["Supplier #"],
+          neededWhen: "Vendor Code",
+          hint: "Needed only when Vendor Code is ticked in Current Commits" },
+        { field: "Supplier Name", label: "Vendor Name (Supplier Name)", defaults: ["Supplier Name"],
+          neededWhen: "Vendor Name",
+          hint: "Needed only when Vendor Name is ticked in Current Commits" }
     ]
 };
 
+const MAPPING_NOTES = {
+    commit_mapping: "Vendor Code and Vendor Name are optional. They are used only to match the " +
+                    "Owner Matrix (Assigned Buyer). If neither is ticked, Assigned Buyer will be UNKNOWN."
+};
+
+const MAPPING_TITLES = {
+    hist_mapping: "Historical Commits",
+    commit_mapping: "Current Commits",
+    owner_mapping: "Owner Matrix"
+};
+
+function normalizeHeader(text) {
+    return String(text).trim().toLowerCase();
+}
+
+// Pre-select the column named in "defaults" (checked first), then a column
+// with the same name as the field. Returns "" when nothing matches.
+function pickDefault(columns, spec) {
+    const wanted = (spec.defaults || []).concat([spec.field]).map(normalizeHeader);
+    for (const name of wanted) {
+        const hit = columns.find(c => normalizeHeader(c) === name);
+        if (hit !== undefined) return hit;
+    }
+    return "";
+}
+
+// state = { hist_mapping: { loaded, values }, commit_mapping: { loaded, values, checked },
+//           owner_mapping: { loaded, values } }
+// values: field -> chosen column ("" when nothing chosen or the field is switched off)
+function findProblems(state) {
+    const problems = [];
+
+    for (const divId of Object.keys(FIELD_SPECS)) {
+        const part = state[divId];
+        const title = MAPPING_TITLES[divId];
+
+        if (!part.loaded) {
+            problems.push(title + ": column mapping has not loaded yet");
+            continue;
+        }
+
+        for (const spec of FIELD_SPECS[divId]) {
+            const label = spec.label || spec.field;
+            const chosen = part.values[spec.field] || "";
+
+            if (spec.optional) {
+                const ticked = (part.checked || {})[spec.field];
+                if (ticked && !chosen) {
+                    problems.push(title + ": select a column for " + label);
+                }
+            } else if (spec.neededWhen) {
+                const needed = (state.commit_mapping.checked || {})[spec.neededWhen];
+                if (needed && !chosen) {
+                    problems.push(title + ": select a column for " + label +
+                                  " (needed because " + spec.neededWhen + " is ticked)");
+                }
+            } else if (!chosen) {
+                problems.push(title + ": select a column for " + label);
+            }
+        }
+    }
+
+    return problems;
+}
+
+function readState() {
+    const state = {};
+
+    for (const divId of Object.keys(FIELD_SPECS)) {
+        const div = document.getElementById(divId);
+        const part = { loaded: !!div.querySelector("table"), values: {}, checked: {} };
+
+        div.querySelectorAll("select[data-field]").forEach(sel => {
+            part.values[sel.dataset.field] = sel.disabled ? "" : sel.value;
+        });
+        div.querySelectorAll("input[data-optional-field]").forEach(box => {
+            part.checked[box.dataset.optionalField] = box.checked;
+        });
+
+        state[divId] = part;
+    }
+
+    return state;
+}
+
+// Owner Matrix Supplier # / Supplier Name columns are only switched on when the
+// matching vendor field is ticked in Current Commits.
+function refreshOwnerState() {
+    const ownerDiv = document.getElementById("owner_mapping");
+    const commitDiv = document.getElementById("commit_mapping");
+
+    ownerDiv.querySelectorAll("select[data-needed-when]").forEach(sel => {
+        const box = commitDiv.querySelector(
+            'input[data-optional-field="' + sel.dataset.neededWhen + '"]'
+        );
+        sel.disabled = !(box && box.checked);
+    });
+}
+
 async function loadColumns(input, mappingDivId) {
     const file = input.files[0];
-    if (!file) return;
-
     const div = document.getElementById(mappingDivId);
     if (!div) return;
+
+    if (!file) {
+        div.innerHTML = "";
+        refreshOwnerState();
+        return;
+    }
 
     const formData = new FormData();
     formData.append("file", file);
@@ -157,7 +271,6 @@ async function loadColumns(input, mappingDivId) {
 
     const data = await response.json();
     const columns = data.columns || [];
-    const required = REQUIRED_FIELDS[mappingDivId];
 
     if (columns.length === 0) {
         div.innerHTML = "<p style='color:red'>Could not read columns from file.</p>";
@@ -166,28 +279,70 @@ async function loadColumns(input, mappingDivId) {
 
     let html = `<table style="width:100%; margin-top:10px; border-collapse:collapse;">
         <tr>
-            <th style="text-align:left; padding:6px; background:#f0f0f0;">Required Field</th>
-            <th style="text-align:left; padding:6px; background:#f0f0f0;">Your Column</th>
+            <th style="text-align:left; padding:6px; background:#f0f0f0;">Field</th>
+            <th style="text-align:left; padding:6px; background:#f0f0f0;">Column in your file</th>
         </tr>`;
 
-    required.forEach(field => {
-        const autoMatch = columns.includes(field) ? field : "";
+    FIELD_SPECS[mappingDivId].forEach(spec => {
+        const label = spec.label || spec.field;
+        const preselect = pickDefault(columns, spec);
+        const startsOff = spec.optional || spec.neededWhen;
+
+        const options = columns.map(c =>
+            `<option value="${c}" ${c === preselect ? "selected" : ""}>${c}</option>`
+        ).join("");
+
+        let labelCell = label;
+        if (spec.optional) {
+            labelCell = `<label style="display:flex; align-items:center; gap:6px;">
+                <input type="checkbox" style="padding:0;" data-optional-field="${spec.field}">
+                <span>${label} (optional)</span></label>`;
+        }
+        if (spec.hint) {
+            labelCell += `<div style="font-size:11px; color:#666; margin-top:2px;">${spec.hint}</div>`;
+        }
+
         html += `<tr>
-            <td style="padding:6px; border-bottom:1px solid #ddd;">${field}</td>
+            <td style="padding:6px; border-bottom:1px solid #ddd;">${labelCell}</td>
             <td style="padding:6px; border-bottom:1px solid #ddd;">
-                <select name="map_${mappingDivId}__${field}" style="width:100%">
+                <select name="map_${mappingDivId}__${spec.field}" style="width:100%"
+                        data-field="${spec.field}"
+                        ${spec.neededWhen ? `data-needed-when="${spec.neededWhen}"` : ""}
+                        ${startsOff ? "disabled" : ""}>
                     <option value="">-- select column --</option>
-                    ${columns.map(c =>
-                        `<option value="${c}" ${c === autoMatch ? "selected" : ""}>${c}</option>`
-                    ).join("")}
+                    ${options}
                 </select>
             </td>
         </tr>`;
     });
 
     html += "</table>";
+
+    if (MAPPING_NOTES[mappingDivId]) {
+        html += `<p style="font-size:12px; color:#555; margin:6px 0 0 0;">${MAPPING_NOTES[mappingDivId]}</p>`;
+    }
+
     div.innerHTML = html;
+
+    // optional Current Commits fields: the select is live only while ticked
+    div.querySelectorAll("input[data-optional-field]").forEach(box => {
+        box.addEventListener("change", () => {
+            const sel = div.querySelector(`select[data-field="${box.dataset.optionalField}"]`);
+            sel.disabled = !box.checked;
+            refreshOwnerState();
+        });
+    });
+
+    refreshOwnerState();
 }
+
+document.getElementById("mainForm").addEventListener("submit", event => {
+    const problems = findProblems(readState());
+    if (problems.length > 0) {
+        event.preventDefault();
+        alert("Please fix the following before running:\n\n" + problems.join("\n"));
+    }
+});
 </script>
 
 </body>

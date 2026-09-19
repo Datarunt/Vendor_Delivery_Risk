@@ -121,6 +121,15 @@ def build_combined_output(
         as_index=False
     ).agg(commit_agg_dict)
 
+    # The commit file's own Vendor Name (only present if the user ticked it).
+    # Kept under its own column name so the Vendor Name merge below cannot
+    # rename or overwrite it. Used only to match the Owner Matrix.
+    commits_agg["_Commit Vendor Name"] = (
+        commits_agg["Vendor Name"]
+        if "Vendor Name" in commits_agg.columns
+        else np.nan
+    )
+
     # ============================================================
     # FORECAST
     # ============================================================
@@ -309,6 +318,16 @@ def build_combined_output(
 
     owner_df.columns = owner_df.columns.str.strip()
 
+    def norm_name(x):
+        if pd.isna(x):
+            return ""
+
+        return " ".join(str(x).upper().split())
+
+    # Supplier # is only mapped when the user matches on Vendor Code.
+    if "Supplier #" not in owner_df.columns:
+        owner_df["Supplier #"] = ""
+
     owner_df["Supplier #"] = owner_df["Supplier #"].apply(norm)
 
     # ------------------------------------------------------------
@@ -334,6 +353,9 @@ def build_combined_output(
         )
     )
 
+    # A blank Supplier # must never match a blank vendor code on a commit.
+    supplier_to_name.pop("", None)
+
     # ------------------------------------------------------------
     # Supplier -> Buyer
     # ------------------------------------------------------------
@@ -344,6 +366,21 @@ def build_combined_output(
             owner_df["Assigned Buyer"]
         )
     )
+    supplier_to_buyer.pop("", None)
+
+    # ------------------------------------------------------------
+    # Vendor Name -> Buyer (used only when the commit file's
+    # Vendor Name was ticked; the Owner Matrix needs a Supplier Name
+    # column mapped for this to match anything)
+    # ------------------------------------------------------------
+
+    name_to_buyer = dict(
+        zip(
+            supplier_names.apply(norm_name),
+            owner_df["Assigned Buyer"]
+        )
+    )
+    name_to_buyer.pop("", None)
 
     # ------------------------------------------------------------
     # Fill Vendor Name
@@ -364,11 +401,17 @@ def build_combined_output(
     # Assigned Buyer
     # ------------------------------------------------------------
 
-    merged["Assigned Buyer"] = (
-        merged["Vendor"]
-        .map(supplier_to_buyer)
-        .fillna("UNKNOWN")
+    # Match on Vendor Code first (if ticked), then on Vendor Name (if ticked).
+    # If neither was ticked there is nothing to match on -> UNKNOWN.
+    assigned_buyer = merged["Vendor"].map(supplier_to_buyer)
+
+    assigned_buyer = assigned_buyer.fillna(
+        merged["_Commit Vendor Name"]
+        .apply(norm_name)
+        .map(name_to_buyer)
     )
+
+    merged["Assigned Buyer"] = assigned_buyer.fillna("UNKNOWN")
 
     # ============================================================
     # VALID RISK MODEL INPUT

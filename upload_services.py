@@ -157,6 +157,15 @@ def process_forecast_uploads(
     else:
         commits_df = pd.read_excel(commit_file)
 
+    # Current Commits fields chosen in the UI -> column names combine_services
+    # already uses. Vendor Code and Vendor Name are optional: they are only
+    # present when the user ticked them, and are used only to match the
+    # Owner Matrix.
+    commits_df = commits_df.rename(columns={
+        "Commit Date": "Commit Dt by Suppl",
+        "Vendor Code": "Vendor"
+    })
+
     commits_df["Material"] = (
         commits_df["Material"]
         .astype(str)
@@ -164,12 +173,13 @@ def process_forecast_uploads(
         .str.upper()
     )
 
-    commits_df["Vendor"] = (
-        commits_df["Vendor"]
-        .astype(str)
-        .str.strip()
-        .str.upper()
-    )
+    if "Vendor" in commits_df.columns:
+        commits_df["Vendor"] = (
+            commits_df["Vendor"]
+            .astype(str)
+            .str.strip()
+            .str.upper()
+        )
 
     out2 = BytesIO()
     commits_df.to_csv(out2, index=False)
