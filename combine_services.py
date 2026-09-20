@@ -1,6 +1,9 @@
 import pandas as pd
 import numpy as np
 from risk_engine import apply_risk_model
+import risk_engine
+from lateness_services import build_lateness_table, add_on_time_probability
+from ml_risk_services import choose_lead_days, train_miss_model, predict_on_time_probability
 
 # ---------------------------
 # COMMIT DATE AGGREGATION
@@ -90,6 +93,53 @@ def build_combined_output(
     end = start + pd.Timedelta(days=forecast_horizon - 1)
 
     # ============================================================
+    # HISTORICAL LATENESS
+    #
+    # The history rows (is_forecast == False) carry each delivery's
+    # Working Days Late. Only deliveries BEFORE the forecast start
+    # are used, so a commit is never judged with deliveries that
+    # happened after it.
+    # ============================================================
+
+    lateness_table = None
+    miss_model = None
+
+    if "Working Days Late" in forecast_df.columns:
+        history_rows = forecast_df[forecast_df["is_forecast"] == False]
+
+        lateness_table = build_lateness_table(
+            history_rows,
+            cutoff_date=start
+        )
+
+        # ------------------------------------------------------------
+        # Machine-learned miss model (ml_risk_services.py), trained on
+        # every past commit received before the forecast start. The
+        # inputs it will be given are as stale as the history is, so it
+        # is trained on inputs with the same gap before the commit date.
+        # ------------------------------------------------------------
+        if risk_engine.RISK_BASIS == "model":
+
+            window_dates = commits_df.loc[
+                (commits_df["Commit Dt by Suppl"] >= start) &
+                (commits_df["Commit Dt by Suppl"] <= end),
+                "Commit Dt by Suppl"
+            ]
+
+            miss_model = train_miss_model(
+                history_rows,
+                start,
+                choose_lead_days(history_rows, window_dates, start)
+            )
+
+    else:
+        print(
+            "WARNING: 'Working Days Late' is not in the forecast data, so "
+            "historical lateness cannot be used. Risk falls back to the "
+            "quantity forecast."
+        )
+
+    # ============================================================
     # COMMITS
     # ============================================================
 
@@ -128,6 +178,15 @@ def build_combined_output(
         commits_agg["Vendor Name"]
         if "Vendor Name" in commits_agg.columns
         else np.nan
+    )
+
+    # Number of commits rolled into each Material + date bucket, so the miss
+    # model can be given an average commit size (it was trained on single commits).
+    commits_agg["_Commit Count"] = (
+        commits_window
+        .groupby(["Material", "Commit Dt by Suppl"])
+        .size()
+        .to_numpy()
     )
 
     # ============================================================
@@ -231,6 +290,19 @@ def build_combined_output(
         forecast_cols.append("Vendor Name")
 
     forecast_window = forecast_window[forecast_cols]
+
+    if "Vendor Name" in forecast_window.columns:
+        forecast_window = forecast_window.assign(
+            **{"_History Vendor": forecast_window["Vendor Name"]}
+        )
+
+    # On-time probability from the vendor's history of late deliveries.
+    # Looked up by the same Material + Vendor Name the forecast is labeled with.
+    if lateness_table is not None and "Vendor Name" in forecast_window.columns:
+        forecast_window = add_on_time_probability(
+            forecast_window,
+            lateness_table
+        )
 
     # ============================================================
     # MERGE
@@ -434,6 +506,22 @@ def build_combined_output(
     )
 
     # ============================================================
+    # MACHINE-LEARNED CHANCE EACH COMMIT IS MET
+    # ============================================================
+
+    if miss_model is not None and "_History Vendor" in merged.columns and not merged.empty:
+
+        merged["Model On-Time Probability"] = predict_on_time_probability(
+            miss_model,
+            pd.DataFrame({
+                "Material": merged["Material"],
+                "Vendor Name": merged["_History Vendor"],
+                "Commit Date": merged["Commit Dt by Suppl"],
+                "Commit Qty": merged["Commit Qty"] / merged["_Commit Count"].clip(lower=1),
+            })
+        )
+
+    # ============================================================
     # DEBUG INFORMATION
     # ============================================================
 
@@ -493,5 +581,20 @@ def build_combined_output(
             "Assigned Buyer"
         ]
     ]
+
+    # Lateness evidence and the quantity result, when available.
+    # Probability / Risk are based on whichever RISK_BASIS selects in risk_engine.py
+    # (model, then lateness, then quantity, for any row without a value).
+    extra_cols = [
+        c for c in (
+            "Model On-Time Probability",
+            "On-Time Probability",
+            "Quantity Probability",
+            "On-Time Sample Size"
+        )
+        if c in merged.columns
+    ]
+
+    final = pd.concat([final, merged.loc[final.index, extra_cols]], axis=1)
 
     return final
