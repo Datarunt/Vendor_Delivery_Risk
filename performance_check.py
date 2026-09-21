@@ -133,7 +133,6 @@ risk_df = risk_df.reset_index(drop=True)
 
 cum_actual_map = {}
 cum_commit_map = {}
-late_flag_map = {}
 
 for material, group in risk_df.groupby("Material", sort=False):
 
@@ -178,13 +177,8 @@ for material, group in risk_df.groupby("Material", sort=False):
         commit_total = own_commit + carry_commit
         actual_total = own_actual + carry_actual
 
-        has_late = (
-            hist_material["Document Date"] > vendor_commit
-        ).any()
-
         cum_actual_map[idx] = actual_total
         cum_commit_map[idx] = commit_total
-        late_flag_map[idx] = has_late
 
         # compute what carries into the NEXT period
         carry_actual = max(actual_total - commit_total, 0.0)
@@ -197,7 +191,6 @@ for material, group in risk_df.groupby("Material", sort=False):
 # -----------------------------
 risk_df["Cum_Actual"] = risk_df.index.map(cum_actual_map)
 risk_df["Cum_Commit"] = risk_df.index.map(cum_commit_map)
-risk_df["Has_Late_Delivery"] = risk_df.index.map(late_flag_map)
 
 # -----------------------------
 # FULFILLMENT RATIO

@@ -154,6 +154,12 @@ def load_historical_file(hist_file):
         df['Date Due'], df['Date Received']
     ).clip(lower=0)
 
+    # Keep the lateness exactly as calculated. The over-delivery rule in step 5
+    # zeroes Number of Days Late for every delivery received in full, even one
+    # that arrived weeks late, so it cannot be used to judge how often a vendor
+    # delivers late. Working Days Late is what the lateness risk (lateness_services.py) uses.
+    df['Working Days Late'] = df['Number of Days Late']
+
     # ---------------------------
     # 4c. DAYS LATE CLASSIFICATION (from the derived days late)
     df['Days Late Classification'] = np.select(
