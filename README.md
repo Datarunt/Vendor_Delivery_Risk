@@ -29,6 +29,13 @@ In plain terms:
 5. **The Risk label** is HIGH when the model's chance of being met is below 85%. If the model can't be trained, the scorecard is used, and if that isn't available, the quantity forecast.
 6. Optionally, each commit is matched to the **Owner Matrix** by vendor code and/or vendor name to add the Assigned Buyer.
 
+![Architecture: three uploaded files go through the Predict Risk stage into memory, the Combine stage trains the miss model and labels each commit, and performance_check.py later scores the predictions](docs/architecture.svg)
+
+The blue path decides the Risk label: the miss model's chance of being met goes to `risk_engine.py`, which flags anything under 85% as HIGH. The quantity forecast no longer sets the label, but it still controls which commits appear (red): commits with no quantity forecast are dropped. Stage 1 results are held in the server's memory until Combine runs, so one user at a time.
+
+<details>
+<summary>Text version (which module calls which)</summary>
+
 ```
 app.py  (Flask web UI: upload files, map columns, pick start date / window / aggregation)
    |
@@ -56,6 +63,8 @@ app.py writes vendor_commit_risk.xlsx  ("Risk Output" + "Accuracy" sheets)
 performance_check.py          <- run separately, later, to score past predictions
 vendor-commit-eda.py          <- optional, standalone exploratory analysis
 ```
+
+</details>
 
 ---
 
@@ -438,6 +447,7 @@ Then open `http://localhost:5000` if the browser doesn't open on its own.
 | `performance_check.py` | Scores past predictions against actual receipts |
 | `vendor-commit-eda.py` | Exploratory analysis script |
 | `templates/index.html` | Web UI (file upload and column mapping) |
+| `docs/architecture.svg` | Architecture diagram shown in [How It Works](#how-it-works) |
 | `Data/` | Working files: Historical, Commits, Account Matrix, Actuals, Predictions, Performance, EDA |
 
 ---
